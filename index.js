@@ -1,23 +1,27 @@
-const { startServer } = require('./server');
-const args = process.argv.slice(2);
+const { initDb } = require('./src/database');
+const { initBot } = require('./src/bot');
+const { startServer } = require('./src/api');
+const { startAdminPoller } = require('./src/api/admin_poller');
 
-const startAll = args.length === 0;
-const startBot = startAll || args.includes('--bot');
-const startDash = startAll || args.includes('--dashboard');
+async function main() {
+    try {
+        console.log('🚀 Starting Asphalt Rewards System (Modular)...');
 
-if (startBot) {
-    console.log('🚀 Starting Telegram Bot...');
-    require('./bot');
+        // 1. Database
+        await initDb();
+
+        // 2. Bot
+        const bot = await initBot();
+
+        // 3. API & Admin Poller
+        await startServer();
+        startAdminPoller(bot);
+
+        console.log('✨ System fully operational.');
+    } catch (e) {
+        console.error('💥 Critical Startup Error:', e);
+        process.exit(1);
+    }
 }
 
-if (startDash) {
-    console.log('🌐 Starting Admin Dashboard...');
-    startServer();
-}
-
-if (!startBot && !startDash) {
-    console.log('Usage:');
-    console.log('  node index.js              (Start both)');
-    console.log('  node index.js --bot        (Start only bot)');
-    console.log('  node index.js --dashboard  (Start only dashboard)');
-}
+main();

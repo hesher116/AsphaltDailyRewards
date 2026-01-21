@@ -81,10 +81,26 @@
                     </div>
                     <div class="stat-card">
                         <div class="stat-info">
+                            <h3>Заблоковано</h3>
+                            <p id="stat-blocked">0</p>
+                        </div>
+                        <div class="stat-icon blocked">🚫</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-info">
                             <h3>Зібрано нагород</h3>
                             <p id="stat-rewards">0</p>
                         </div>
                         <div class="stat-icon rewards">🎁</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-info">
+                            <h3>Система</h3>
+                            <p id="stat-system-status">...</p>
+                            <button onclick="toggleSystemPause()" class="text-xs hover:underline"
+                                style="color: var(--accent-blue)">ВКЛ/ВИКЛ</button>
+                        </div>
+                        <div class="stat-icon system">⚙️</div>
                     </div>
                 </div>
 
@@ -92,6 +108,15 @@
                     <div class="chart-container glass">
                         <h3>Активність збору (7 днів)</h3>
                         <canvas id="activityChart"></canvas>
+                        <button onclick="fetchStats()"
+                            style="position: absolute; top: 1rem; right: 1rem; font-size: 0.7rem; opacity: 0.5;">Оновити</button>
+                    </div>
+                </div>
+
+                <div class="rewards-overview mt-8">
+                    <h2 class="section-title">🎁 Поточні нагороди у грі</h2>
+                    <div id="global-rewards-container" class="rewards-grid">
+                        <div class="reward-placeholder">Збір нагород ще не проводився...</div>
                     </div>
                 </div>
             </section>
@@ -103,10 +128,9 @@
                             <tr>
                                 <th>Telegram ID</th>
                                 <th>Email</th>
-                                <th>Статус</th>
+                                <th>Тип</th>
+                                <th>Останній збір</th>
                                 <th>Сесія</th>
-                                <th>Преміум</th>
-                                <th>Блок</th>
                                 <th>Дії</th>
                             </tr>
                         </thead>
@@ -120,17 +144,54 @@
             <section id="broadcast" class="tab-content">
                 <div class="form-container glass">
                     <h3>📢 Створити розсилку</h3>
-                    <p class="form-desc">Ваше повідомлення буде надіслано всім активним користувачам бота.</p>
-                    <textarea id="broadcastMsg" placeholder="Введіть текст повідомлення..."></textarea>
-                    <button id="sendBroadcast" class="btn-primary">Надіслати всім</button>
+                    <p class="form-desc">Виберіть групу або вкажіть ID користувача.</p>
+
+                    <div class="input-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <div class="input-group">
+                            <label for="broadcastGroup">Цільова група:</label>
+                            <select id="broadcastGroup" class="glass-input">
+                                <option value="all">Всі (Активні)</option>
+                                <option value="premium">Тільки Преміум</option>
+                                <option value="blocked">Тільки Забанені</option>
+                                <option value="custom">Конкретний ID</option>
+                            </select>
+                        </div>
+
+                        <div class="input-group">
+                            <label for="broadcastTarget">ID користувача:</label>
+                            <input type="text" id="broadcastTarget" placeholder="Наприклад: 12345678" disabled>
+                        </div>
+                    </div>
+
+                    <div class="input-group" style="margin-top: 1rem;">
+                        <label for="broadcastTTL">Час життя повідомлення (сек, порожньо = назавжди):</label>
+                        <input type="number" id="broadcastTTL" placeholder="Наприклад: 3600">
+                    </div>
+
+                    <textarea id="broadcastMsg" placeholder="Введіть текст повідомлення..."
+                        style="margin-top: 1.5rem;"></textarea>
+
+                    <div class="broadcast-templates"
+                        style="margin-top: -1.7rem; margin-bottom: 2rem; display: flex; gap: 0.5rem; position: relative; z-index: 10;">
+                        <button onclick="applyTemplate('downtime')"
+                            class="text-xs bg-gray-800 px-2 py-1 rounded hover:bg-gray-700"
+                            style="border: 1px solid var(--glass-border); color: var(--text-muted); cursor: pointer;">⚠️
+                            Збій геймлофту</button>
+                        <button onclick="applyTemplate('resolved')"
+                            class="text-xs bg-gray-800 px-2 py-1 rounded hover:bg-gray-700"
+                            style="border: 1px solid var(--glass-border); color: var(--text-muted); cursor: pointer;">✅
+                            Виправлено</button>
+                    </div>
+
+                    <button id="sendBroadcastBtn" class="btn-primary">Надіслати</button>
                     <div id="broadcastStatus" class="status-msg"></div>
                 </div>
             </section>
 
             <section id="logs" class="tab-content">
                 <div class="logs-container glass">
-                    <h3>📝 Останні дії</h3>
-                    <div id="logsList" class="logs-list">
+                    <h3>📝 Останні дії в системі</h3>
+                    <div id="globalLogsList" class="logs-list">
                         <!-- JS populated -->
                     </div>
                 </div>
@@ -140,6 +201,29 @@
 
     <!-- Notification system -->
     <div id="toast" class="toast"></div>
+
+
+    <!-- Modal -->
+    <div id="resultModal" class="modal">
+        <div class="modal-content">
+            <h3 id="modalTitle">Результат</h3>
+            <p id="modalBody"></p>
+            <button class="modal-close" onclick="closeModal()">Зрозуміло</button>
+        </div>
+    </div>
+
+    <!-- Chat Modal -->
+    <div id="chatModal" class="modal">
+        <div class="modal-content chat-modal-content">
+            <div class="modal-header">
+                <h2 id="chatUserName">Чат користувача</h2>
+                <span class="close" onclick="closeModal('chatModal')">&times;</span>
+            </div>
+            <div id="chatContainer" class="chat-bubbles">
+                <!-- Messages will be injected here -->
+            </div>
+        </div>
+    </div>
 
     <script src="app.js"></script>
 </body>
