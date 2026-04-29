@@ -17,6 +17,8 @@ The app is intentionally small: one Telegram bot, one scheduler, one browser aut
 - Debug HTML snapshots on collector crashes
 - Linux/server friendly headless mode
 - PM2 config for 24/7 deployment
+- PM2 crash/reboot restart notification with auto-delete TTL
+- Startup auto-collect if the last successful collect was more than 24h10m ago
 
 ## Dashboard
 
@@ -170,6 +172,7 @@ Important variables:
 - `SQLITE_PATH` - SQLite database path.
 - `IMAGE_RETENTION_DAYS` - reward image cleanup window.
 - `DEBUG_SNAPSHOT_RETENTION_DAYS` - debug snapshot cleanup window.
+- `RESTART_NOTIFICATION_TTL_HOURS` - how long the temporary PM2 restart notification stays in Telegram.
 
 ## Storage
 
@@ -185,6 +188,12 @@ SQLite stores:
 - recent dashboard actions/messages
 - scheduler offset and next run
 - reward collection history
+
+Runtime files in `data/`:
+
+- `graceful_shutdown.flag` - written on SIGINT/SIGTERM to distinguish graceful stops from crash/reboot restarts.
+- `last_successful_collect.timestamp` - used on startup to decide whether immediate auto-collect is needed.
+- `restart_notification.json` - stores temporary restart notification metadata.
 
 ## OTP Flow
 
@@ -207,6 +216,19 @@ After a successful collection, the next run is scheduled for:
 Manual failed collections do not overwrite an existing valid next scheduled run.
 
 After restart, the scheduler restores `nextRunAt` from SQLite. If it is already due, the app schedules the collection shortly after startup.
+
+On startup, if the last successful collect was more than 24 hours and 10 minutes ago, the app starts a collection immediately before the scheduler is initialized. If this startup collection fails, the existing valid schedule is preserved.
+
+## PM2 Restart Notification
+
+When running under PM2, the app detects whether the previous process stopped gracefully:
+
+- graceful shutdown writes `data/graceful_shutdown.flag`;
+- missing, invalid, or stale flag is treated as PM2 crash/reboot restart;
+- the bot sends a temporary Telegram warning message outside the dashboard;
+- the message is deleted after `RESTART_NOTIFICATION_TTL_HOURS` hours.
+
+This restart notification is the only intentional exception to the one-dashboard-message rule.
 
 ## Troubleshooting
 

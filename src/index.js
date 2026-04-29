@@ -9,9 +9,19 @@ const AsphaltCollector = require('./automation/asphaltCollector');
 const RewardScheduler = require('./scheduler/rewardScheduler');
 const StatusReporter = require('./status/statusReporter');
 const Dashboard = require('./bot/dashboard');
-const { createTelegramBot } = require('./bot/telegramBot');
+const { createTelegramBot, deleteMessageSafe, sendMessageToChat } = require('./bot/telegramBot');
 const { registerBotHandlers } = require('./bot/botHandlers');
 const { formatDateTime } = require('./utils/time');
+const {
+  clearRestartNotification,
+  consumeGracefulShutdownFlag,
+  hoursSince,
+  isPm2Runtime,
+  readLastSuccessfulCollectTimestamp,
+  safeWriteLastCollect,
+  writeGracefulShutdownFlag,
+  writeRestartNotification
+} = require('./utils/runtimeState');
 
 function validateConfig() {
   const missing = [];
@@ -24,6 +34,86 @@ async function ensureDataDirs() {
   await fs.mkdir(config.storage.dataDir, { recursive: true });
   await fs.mkdir(config.browser.profileDir, { recursive: true });
   await fs.mkdir(config.storage.rewardImagesDir, { recursive: true });
+  await fs.mkdir(config.storage.debugSnapshotsDir, { recursive: true });
+}
+
+async function notifyPm2RestartIfNeeded(bot) {
+  const restartState = await consumeGracefulShutdownFlag();
+  if (restartState.graceful || !isPm2Runtime()) return null;
+
+  const sent = await sendMessageToChat(
+    bot,
+    config.telegram.chatId,
+    [
+      '⚠️ Сервер перезапустився',
+      `Час: ${formatDateTime(new Date())}`,
+      'Причина: PM2 restart detected',
+      'Статус: Працює нормально'
+    ].join('\n')
+  );
+
+  if (!sent || !sent.message_id) return null;
+
+  await writeRestartNotification(sent.message_id);
+  logger.warn('PM2 restart detected, temporary Telegram notification sent');
+
+  const ttlMs = config.runtime.restartNotificationTtlHours * 60 * 60 * 1000;
+  return setTimeout(async () => {
+    await deleteMessageSafe(bot, config.telegram.chatId, sent.message_id);
+    await clearRestartNotification();
+  }, ttlMs);
+}
+
+async function getLastSuccessfulCollectIso(sessionRepository) {
+  const fileTimestamp = await readLastSuccessfulCollectTimestamp();
+  if (fileTimestamp) return fileTimestamp;
+
+  const dbTimestamp = sessionRepository.getState().lastSuccessfulCollectAt;
+  if (dbTimestamp) {
+    await safeWriteLastCollect(dbTimestamp);
+    return dbTimestamp;
+  }
+  return null;
+}
+
+function hasUpcomingScheduledRun(sessionRepository) {
+  const nextRunAt = sessionRepository.getState().nextRunAt;
+  if (!nextRunAt) return false;
+  const date = new Date(nextRunAt);
+  if (Number.isNaN(date.getTime())) return false;
+  return date.getTime() > Date.now() && date.getTime() - Date.now() <= 10 * 60 * 1000;
+}
+
+async function runStartupAutoCollectIfNeeded({ scheduler, sessionRepository, dashboard }) {
+  const lastCollectIso = await getLastSuccessfulCollectIso(sessionRepository);
+  const ageHours = hoursSince(lastCollectIso);
+  if (ageHours === null) return;
+  if (ageHours * 60 * 60 * 1000 <= config.runtime.startupAutoCollectThresholdMs) return;
+
+  if (hasUpcomingScheduledRun(sessionRepository)) {
+    logger.info('Наступний збір уже заплановано найближчим часом, startup auto-collect пропущено');
+    return;
+  }
+
+  logger.info(`Останній збір був ${ageHours.toFixed(1)} годин тому, запускаю негайно`);
+  await dashboard.setStatus('Запускаю збір після рестарту', {
+    action: 'Startup auto-collect',
+    message: `Останній збір був ${ageHours.toFixed(1)} годин тому, запускаю негайно`
+  });
+
+  const result = await scheduler.runStartupCollect();
+  if (result.status === 'success' || result.status === 'partial') {
+    await dashboard.setStatus('Startup збір завершено', {
+      action: 'Startup auto-collect завершено',
+      message: `Наступний збір: ${formatDateTime(result.nextRunAt)}`
+    });
+    return;
+  }
+
+  await dashboard.setStatus('Startup збір не вдався', {
+    action: 'Startup auto-collect не вдався',
+    message: `Scheduler залишено без змін. Наступний збір: ${formatDateTime(result.nextRunAt)}`
+  });
 }
 
 async function bootstrap() {
@@ -37,6 +127,7 @@ async function bootstrap() {
   const authFlow = new AuthFlow(sessionRepository, statusReporter);
   const collector = new AsphaltCollector(authFlow, sessionRepository, statusReporter);
   const bot = await createTelegramBot();
+  let restartNotificationTimer = await notifyPm2RestartIfNeeded(bot);
 
   let dashboard;
   const scheduler = new RewardScheduler({
@@ -81,19 +172,26 @@ async function bootstrap() {
     dashboard
   });
 
-  scheduler.start();
   await dashboard.setStatus('Очікую команду', {
     action: 'Запуск системи',
-    lastMessage: `Browser mode: HEADLESS=${config.browser.headless ? 'true' : 'false'}`
+    message: `Browser mode: HEADLESS=${config.browser.headless ? 'true' : 'false'}`
   });
+
+  await runStartupAutoCollectIfNeeded({ scheduler, sessionRepository, dashboard });
+  scheduler.start();
 
   async function shutdown(signal) {
     logger.info('Завершую роботу програми');
     logger.debug({ signal }, 'Shutdown signal');
+    if (restartNotificationTimer) {
+      clearTimeout(restartNotificationTimer);
+      restartNotificationTimer = null;
+    }
     scheduler.stop();
     dashboard.stop();
     await bot.stopPolling().catch(() => {});
     await authFlow.close();
+    await writeGracefulShutdownFlag();
     db.close();
     process.exit(0);
   }

@@ -171,6 +171,19 @@ async function sendAdminMessage(bot, text, options = {}) {
   return sendMessageToChat(bot, config.telegram.chatId, text, options);
 }
 
+async function deleteMessageSafe(bot, chatId, messageId) {
+  if (!chatId || !messageId) return;
+  try {
+    await bot.deleteMessage(chatId, messageId);
+  } catch (error) {
+    const message = String(error.message || '');
+    if (message.includes('message to delete not found') || message.includes('message identifier is not specified')) {
+      return;
+    }
+    logger.debug({ error, chatId, messageId }, 'deleteMessage failed');
+  }
+}
+
 module.exports = {
   createTelegramBot,
   sendMessageToChat,
@@ -179,6 +192,7 @@ module.exports = {
   editCaption,
   editPhotoMedia,
   sendAdminMessage,
+  deleteMessageSafe,
   dashboardKeyboard,
   dashboardHeaderPath
 };

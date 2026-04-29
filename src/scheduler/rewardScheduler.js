@@ -3,6 +3,7 @@ const logger = require('../utils/logger');
 const { delay, nowIso, formatDateTimeForLog } = require('../utils/time');
 const { removeOldFiles } = require('../utils/fileCleanup');
 const { savePageSnapshot } = require('../utils/debugSnapshot');
+const { safeWriteLastCollect } = require('../utils/runtimeState');
 
 function randomOffsetMs() {
   const min = config.scheduler.minJitterMs;
@@ -114,6 +115,10 @@ class RewardScheduler {
     return this.runCollect({ notify: false, allowRetries: false, source: 'manual' });
   }
 
+  async runStartupCollect() {
+    return this.runCollect({ notify: false, allowRetries: false, source: 'startup' });
+  }
+
   async runScheduledCollect() {
     return this.runCollect({ notify: true, allowRetries: true, source: 'scheduled' });
   }
@@ -162,12 +167,16 @@ class RewardScheduler {
 
     if (success) {
       nextRunAt = this.scheduleNextAfterSuccess();
+      await safeWriteLastCollect(new Date().toISOString());
     } else if (source === 'manual') {
       nextRunAt = this.preserveExistingSchedule();
       this.sessionRepository.update({ lastRunAt: now });
       if (finalResult.status === 'unavailable') {
         logger.warn(`Подарунки зараз недоступні. Наступний збір уже запланований на ${formatDateTimeForLog(nextRunAt)}`);
       }
+    } else if (source === 'startup') {
+      nextRunAt = this.preserveExistingSchedule();
+      this.sessionRepository.update({ lastRunAt: now });
     } else {
       const nextDate = this.computeNextFrom(new Date());
       nextRunAt = nextDate.toISOString();
