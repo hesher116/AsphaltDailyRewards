@@ -48,11 +48,11 @@ class AsphaltCollector {
 
   async collect() {
     const startedAt = nowIso();
-    const page = this.authFlow.getPage();
     logger.debug({ startedAt }, 'Starting reward collection');
     this.report('Починаю збір подарунків');
 
     await this.authFlow.gotoShop();
+    const page = this.authFlow.getPage();
     const sessionOk = await this.ensureSession();
     if (!sessionOk) {
       return {

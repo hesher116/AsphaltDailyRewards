@@ -20,7 +20,8 @@ async function main() {
       '--disable-blink-features=AutomationControlled',
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--disable-gpu'
+      '--disable-gpu',
+      '--disable-dev-shm-usage'
     ]
   });
 
