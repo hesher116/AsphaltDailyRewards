@@ -11,6 +11,34 @@ function randomOffsetMs() {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+function collectErrorForUser(error) {
+  const raw = String(error && error.message ? error.message : error || '').trim();
+  const firstLine = raw.split('\n').find(Boolean) || 'невідома помилка';
+  const lower = raw.toLowerCase();
+
+  if (lower.includes('executable doesn') || lower.includes('browser executable')) {
+    return 'Chromium не встановлено для Playwright. Запусти: npx playwright install chromium';
+  }
+
+  if (lower.includes('host system is missing dependencies') || lower.includes('missing dependencies')) {
+    return 'У Linux бракує системних залежностей Chromium. Спробуй: npx playwright install --with-deps chromium';
+  }
+
+  if (lower.includes('timeout')) {
+    return 'сайт або потрібний елемент не відповів вчасно';
+  }
+
+  if (lower.includes('net::') || lower.includes('err_name_not_resolved') || lower.includes('err_connection')) {
+    return 'не вдалося відкрити сайт, перевір інтернет або доступ до Gameloft';
+  }
+
+  if (lower.includes('target page') || lower.includes('context or browser has been closed')) {
+    return 'браузер закрився під час збору';
+  }
+
+  return firstLine.length > 220 ? `${firstLine.slice(0, 217)}...` : firstLine;
+}
+
 class RewardScheduler {
   constructor({ collector, rewardsRepository, sessionRepository, notify }) {
     this.collector = collector;
@@ -145,15 +173,19 @@ class RewardScheduler {
         }
       }
     } catch (error) {
-      logger.error('Не вдалося зібрати подарунки');
+      const userError = collectErrorForUser(error);
+      logger.error(`Не вдалося зібрати подарунки: ${userError}`);
       logger.debug({ error }, 'Reward collection crashed');
-      await savePageSnapshot(this.collector.authFlow.page, 'collector-error');
+      const snapshotPath = await savePageSnapshot(this.collector.authFlow.page, 'collector-error');
+      if (snapshotPath) {
+        logger.warn(`Збережено debug snapshot сторінки: ${snapshotPath}`);
+      }
       finalResult = {
         status: 'error',
         rewards: [],
         imagePaths: [],
         description: 'Reward collection failed',
-        error: error.message,
+        error: userError,
         technicalStatus: 'collector_error'
       };
     } finally {
