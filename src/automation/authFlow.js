@@ -1,9 +1,9 @@
-const { chromium } = require('playwright');
 const fs = require('fs/promises');
 const config = require('../config');
 const selectors = require('./selectors');
 const logger = require('../utils/logger');
 const { nowIso } = require('../utils/time');
+const { launchPersistentBrowserContext } = require('./browserLauncher');
 
 class AuthFlow {
   constructor(sessionRepository, statusReporter) {
@@ -20,27 +20,9 @@ class AuthFlow {
     await fs.mkdir(config.browser.profileDir, { recursive: true });
 
     this.report('Запускаю браузер');
-    logger.debug({ headless: config.browser.headless, profileDir: config.browser.profileDir }, 'Параметри браузера');
+    logger.debug({ engine: config.browser.engine, headless: config.browser.headless, profileDir: config.browser.profileDir }, 'Параметри браузера');
 
-    const launchOptions = {
-      headless: config.browser.headless,
-      viewport: config.browser.viewport,
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      args: [
-        '--disable-blink-features=AutomationControlled',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-gpu',
-        '--disable-dev-shm-usage',
-        ...config.browser.extraArgs
-      ]
-    };
-    if (config.browser.executablePath) {
-      launchOptions.executablePath = config.browser.executablePath;
-    }
-
-    this.context = await chromium.launchPersistentContext(config.browser.profileDir, launchOptions);
+    this.context = await launchPersistentBrowserContext(config.browser.profileDir);
 
     this.context.on('close', () => {
       this.sessionRepository.update({ activeBrowserSession: false });

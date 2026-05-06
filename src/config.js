@@ -37,6 +37,7 @@ module.exports = {
     shopUrl: process.env.SHOP_URL || 'https://shop.gameloft.com/games/Asphalt_Legends'
   },
   browser: {
+    engine: (process.env.BROWSER_ENGINE || 'chromium').toLowerCase(),
     headless: boolFromEnv(process.env.HEADLESS, false),
     profileDir: resolvePath(process.env.BROWSER_PROFILE_DIR, path.join(dataDir, 'browser-profile')),
     viewport: { width: 1280, height: 800 },

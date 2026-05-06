@@ -1,7 +1,7 @@
-const { chromium } = require('playwright');
 const config = require('../src/config');
 const logger = require('../src/utils/logger');
 const { ensureDir } = require('../src/utils/fileCleanup');
+const { launchPersistentBrowserContext } = require('../src/automation/browserLauncher');
 
 async function runStage(name, action) {
   logger.info(`Healthcheck: ${name}`);
@@ -24,28 +24,12 @@ async function main() {
   const profileDir = process.env.HEALTHCHECK_PROFILE_DIR || config.browser.profileDir;
   await ensureDir(profileDir);
 
-  logger.info(`Запускаю Chromium у режимі HEADLESS=${config.browser.headless}`);
+  logger.info(`Запускаю ${config.browser.engine} у режимі HEADLESS=${config.browser.headless}`);
   logger.info(`Browser profile: ${profileDir}`);
   if (config.browser.executablePath) {
-    logger.info(`Chromium executable: ${config.browser.executablePath}`);
+    logger.info(`Browser executable: ${config.browser.executablePath}`);
   }
-  const launchOptions = {
-    headless: config.browser.headless,
-    viewport: config.browser.viewport,
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-gpu',
-      '--disable-dev-shm-usage',
-      ...config.browser.extraArgs
-    ]
-  };
-  if (config.browser.executablePath) {
-    launchOptions.executablePath = config.browser.executablePath;
-  }
-
-  const context = await chromium.launchPersistentContext(profileDir, launchOptions);
+  const context = await launchPersistentBrowserContext(profileDir);
 
   try {
     const page = context.pages().find((candidate) => !candidate.isClosed()) || await context.newPage();
