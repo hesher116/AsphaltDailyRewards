@@ -40,6 +40,7 @@ module.exports = {
     headless: boolFromEnv(process.env.HEADLESS, false),
     profileDir: resolvePath(process.env.BROWSER_PROFILE_DIR, path.join(dataDir, 'browser-profile')),
     viewport: { width: 1280, height: 800 },
+    executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || '',
     extraArgs: listFromEnv(process.env.CHROMIUM_EXTRA_ARGS)
   },
   storage: {

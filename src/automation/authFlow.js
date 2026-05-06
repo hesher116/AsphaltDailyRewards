@@ -22,7 +22,7 @@ class AuthFlow {
     this.report('Запускаю браузер');
     logger.debug({ headless: config.browser.headless, profileDir: config.browser.profileDir }, 'Параметри браузера');
 
-    this.context = await chromium.launchPersistentContext(config.browser.profileDir, {
+    const launchOptions = {
       headless: config.browser.headless,
       viewport: config.browser.viewport,
       userAgent:
@@ -35,7 +35,12 @@ class AuthFlow {
         '--disable-dev-shm-usage',
         ...config.browser.extraArgs
       ]
-    });
+    };
+    if (config.browser.executablePath) {
+      launchOptions.executablePath = config.browser.executablePath;
+    }
+
+    this.context = await chromium.launchPersistentContext(config.browser.profileDir, launchOptions);
 
     this.context.on('close', () => {
       this.sessionRepository.update({ activeBrowserSession: false });
