@@ -17,6 +17,14 @@ function resolvePath(value, fallback) {
   return path.resolve(process.cwd(), value || fallback);
 }
 
+function listFromEnv(value) {
+  if (!value) return [];
+  return String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 const dataDir = resolvePath(process.env.DATA_DIR, './data');
 
 module.exports = {
@@ -31,7 +39,8 @@ module.exports = {
   browser: {
     headless: boolFromEnv(process.env.HEADLESS, false),
     profileDir: resolvePath(process.env.BROWSER_PROFILE_DIR, path.join(dataDir, 'browser-profile')),
-    viewport: { width: 1280, height: 800 }
+    viewport: { width: 1280, height: 800 },
+    extraArgs: listFromEnv(process.env.CHROMIUM_EXTRA_ARGS)
   },
   storage: {
     dataDir,

@@ -32,11 +32,18 @@ class AuthFlow {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-gpu',
-        '--disable-dev-shm-usage'
+        '--disable-dev-shm-usage',
+        ...config.browser.extraArgs
       ]
     });
 
-    this.page = this.context.pages()[0] || await this.context.newPage();
+    this.context.on('close', () => {
+      this.sessionRepository.update({ activeBrowserSession: false });
+      this.context = null;
+      this.page = null;
+    });
+
+    this.page = this.context.pages().find((page) => !page.isClosed()) || await this.context.newPage();
     this.page.setDefaultTimeout(config.runtime.selectorTimeoutMs);
     this.page.setDefaultNavigationTimeout(config.runtime.navigationTimeoutMs);
     this.sessionRepository.update({ activeBrowserSession: true });

@@ -10,10 +10,12 @@ async function main() {
     throw new Error('SHOP_URL порожній');
   }
 
-  await ensureDir(config.browser.profileDir);
+  const profileDir = process.env.HEALTHCHECK_PROFILE_DIR || config.browser.profileDir;
+  await ensureDir(profileDir);
 
   logger.info(`Запускаю Chromium у режимі HEADLESS=${config.browser.headless}`);
-  const context = await chromium.launchPersistentContext(config.browser.profileDir, {
+  logger.info(`Browser profile: ${profileDir}`);
+  const context = await chromium.launchPersistentContext(profileDir, {
     headless: config.browser.headless,
     viewport: config.browser.viewport,
     args: [
@@ -21,12 +23,13 @@ async function main() {
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-gpu',
-      '--disable-dev-shm-usage'
+      '--disable-dev-shm-usage',
+      ...config.browser.extraArgs
     ]
   });
 
   try {
-    const page = context.pages()[0] || await context.newPage();
+    const page = context.pages().find((candidate) => !candidate.isClosed()) || await context.newPage();
     page.setDefaultTimeout(config.runtime.selectorTimeoutMs);
     page.setDefaultNavigationTimeout(config.runtime.navigationTimeoutMs);
 
