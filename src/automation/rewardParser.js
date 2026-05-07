@@ -54,6 +54,72 @@ async function scrollForRewards(page) {
   await page.waitForTimeout(800);
 }
 
+async function closeCookieNotice(page) {
+  const buttons = [
+    'button:has-text("Disagree and close")',
+    'button:has-text("Agree and close")',
+    'text="Disagree and close"',
+    'text="Agree and close"'
+  ];
+
+  for (const selector of buttons) {
+    const button = page.locator(selector).first();
+    if (await button.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await button.click().catch(() => {});
+      await page.waitForTimeout(700);
+      return;
+    }
+  }
+}
+
+async function waitForMountedApp(page) {
+  const deadline = Date.now() + config.runtime.navigationTimeoutMs;
+  let lastRootText = '';
+
+  while (Date.now() < deadline) {
+    await closeCookieNotice(page);
+
+    const rootInfo = await page.evaluate(() => {
+      const root = document.querySelector('#root');
+      return {
+        hasRoot: Boolean(root),
+        childCount: root ? root.children.length : 0,
+        text: root ? root.innerText.slice(0, 500) : ''
+      };
+    }).catch(() => ({ hasRoot: false, childCount: 0, text: '' }));
+
+    lastRootText = rootInfo.text || lastRootText;
+    if (rootInfo.hasRoot && rootInfo.childCount > 0 && rootInfo.text.trim().length > 20) {
+      return;
+    }
+
+    await page.waitForTimeout(1500);
+  }
+
+  throw new Error(`Checkout app did not finish loading. Last root text: ${lastRootText || 'empty'}`);
+}
+
+async function waitForCheckoutReady(page) {
+  await page.waitForURL('**/purchase-checkout/**', { timeout: config.runtime.navigationTimeoutMs });
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await waitForMountedApp(page);
+      await page.locator(selectors.orderSummary).first().waitFor({
+        state: 'visible',
+        timeout: config.runtime.selectorTimeoutMs
+      });
+      return;
+    } catch (error) {
+      if (attempt === 3) throw error;
+      logger.warn('Checkout сторінка ще не завантажилась, оновлюю її');
+      logger.debug({ error: error.message, attempt }, 'Checkout page was not ready');
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: config.runtime.navigationTimeoutMs }).catch(() => {});
+      await page.waitForTimeout(3000);
+    }
+  }
+}
+
 async function saveImageFromUrl(page, imageUrl, index) {
   if (!imageUrl) return null;
 
@@ -109,6 +175,7 @@ async function findDailyFreeGiftButtons(page) {
 
 async function findCurrentFreeReward(page, index) {
   await scrollForRewards(page);
+  await closeCookieNotice(page);
   const rewards = await findDailyFreeGiftButtons(page);
   const reward = rewards[index - 1];
   if (!reward) {
@@ -130,11 +197,7 @@ async function claimReward(page, reward) {
   await reward.freeButton.scrollIntoViewIfNeeded().catch(() => {});
   await reward.freeButton.click();
 
-  await page.waitForLoadState('domcontentloaded', { timeout: config.runtime.navigationTimeoutMs }).catch(() => {});
-  await page.locator(selectors.orderSummary).first().waitFor({
-    state: 'visible',
-    timeout: config.runtime.selectorTimeoutMs
-  });
+  await waitForCheckoutReady(page);
 
   const claimButton = page.locator(selectors.claimButton).first();
   await claimButton.waitFor({ state: 'visible', timeout: config.runtime.selectorTimeoutMs });
