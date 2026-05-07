@@ -56,6 +56,10 @@ function formatStatus(sessionRepository, scheduler) {
 
 function collectionSummary(result, nextRunAt) {
   const rewardText = rewardLines(result.rewards).replace(/\n/g, '; ');
+  const jobText = result.jobId ? `Collect #${result.jobId}. ` : '';
+  const progress = Number.isFinite(result.collectedCount) && Number.isFinite(result.expectedCount)
+    ? ` Статус: collected ${result.collectedCount}/${result.expectedCount}.`
+    : '';
   const prefix = result.status === 'success'
     ? 'Щоденні нагороди зібрано успішно.'
     : result.status === 'partial'
@@ -64,7 +68,7 @@ function collectionSummary(result, nextRunAt) {
         ? 'Потрібна повторна авторизація.'
         : 'Щоденні нагороди зараз недоступні.';
   const preserved = result.schedulePreserved ? ' Графік не змінено: це була невдала ручна спроба.' : '';
-  return `${prefix} Отримано: ${rewardText}. Наступний збір: ${formatDateTime(nextRunAt)}.${preserved}`;
+  return `${jobText}${prefix} Отримано: ${rewardText}.${progress} Наступний збір: ${formatDateTime(nextRunAt)}.${preserved}`;
 }
 
 async function withActionLock(ctx, actionName, action) {

@@ -162,11 +162,15 @@ async function bootstrap() {
             ? 'Потрібна повторна авторизація'
             : 'Подарунки зараз недоступні';
         const rewards = (event.result.rewards || []).map((reward) => reward.name).join('; ') || 'нагороди не отримано';
+        const progress = Number.isFinite(event.result.collectedCount) && Number.isFinite(event.result.expectedCount)
+          ? `collected ${event.result.collectedCount}/${event.result.expectedCount}`
+          : event.result.technicalStatus || 'unknown';
+        const jobText = event.result.jobId ? `Collect #${event.result.jobId}: ` : '';
         await dashboard.setStatus(
           status,
           {
             action: status,
-            message: `Результат: ${rewards}. Наступний збір: ${formatDateTime(event.result.nextRunAt)}`
+            message: `${jobText}Результат: ${rewards}. Статус: ${progress}. Наступний збір: ${formatDateTime(event.result.nextRunAt)}`
           }
         );
       }

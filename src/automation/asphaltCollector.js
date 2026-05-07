@@ -47,13 +47,14 @@ class AsphaltCollector {
     }
   }
 
-  async collect() {
+  async collect(job = {}) {
     const startedAt = nowIso();
-    logger.debug({ startedAt }, 'Starting reward collection');
+    logger.debug({ startedAt, job }, 'Starting reward collection');
     this.report('Починаю збір подарунків');
 
     await this.authFlow.gotoShop();
     const page = this.authFlow.getPage();
+    this.report(`Поточна сторінка: ${page.url()}`);
     const sessionOk = await this.ensureSession();
     if (!sessionOk) {
       return {
@@ -61,7 +62,9 @@ class AsphaltCollector {
         rewards: [],
         imagePaths: [],
         description: 'Session lost before reward collection',
-        technicalStatus: 'auth_required'
+        technicalStatus: 'auth_required',
+        jobId: job.id || null,
+        source: job.source || null
       };
     }
     await this.selectorHealthCheck();
@@ -73,6 +76,7 @@ class AsphaltCollector {
       try {
         if (page.url().includes('purchase-success')) {
           await this.authFlow.gotoShop();
+          this.report(`Повернувся в магазин: ${page.url()}`);
         }
 
         this.report(index === 1 ? 'Забираю перший подарунок' : 'Забираю другий подарунок');
@@ -83,6 +87,7 @@ class AsphaltCollector {
       } catch (error) {
         errors.push(`Reward #${index}: ${error.message}`);
         logger.debug({ error: error.message, index }, 'No more available rewards or claim failed');
+        this.report(`Подарунок #${index} не зібрано: ${error.message.split('\n')[0]}`, 'warn');
         const snapshotPath = await savePageSnapshot(page, `reward-${index}-failed`);
         if (snapshotPath) {
           logger.warn(`Збережено debug snapshot подарунка: ${snapshotPath}`);
@@ -101,7 +106,11 @@ class AsphaltCollector {
         rewards,
         imagePaths,
         description: 'Collected 2 daily rewards',
-        technicalStatus: imageWarnings.length ? `collected 2/2; image warnings: ${imageWarnings.join('; ')}` : 'collected 2/2'
+        technicalStatus: imageWarnings.length ? `collected 2/2; image warnings: ${imageWarnings.join('; ')}` : 'collected 2/2',
+        collectedCount: rewards.length,
+        expectedCount: 2,
+        jobId: job.id || null,
+        source: job.source || null
       };
     }
 
@@ -113,7 +122,11 @@ class AsphaltCollector {
         imagePaths,
         description: `Collected ${rewards.length}/2 daily rewards`,
         error: errors.join('; ') || null,
-        technicalStatus: `collected ${rewards.length}/2`
+        technicalStatus: `collected ${rewards.length}/2`,
+        collectedCount: rewards.length,
+        expectedCount: 2,
+        jobId: job.id || null,
+        source: job.source || null
       };
     }
 
@@ -124,7 +137,11 @@ class AsphaltCollector {
       imagePaths: [],
       description: 'Daily rewards are not available yet',
       error: errors.join('; ') || null,
-      technicalStatus: 'collected 0/2'
+      technicalStatus: 'collected 0/2',
+      collectedCount: 0,
+      expectedCount: 2,
+      jobId: job.id || null,
+      source: job.source || null
     };
   }
 

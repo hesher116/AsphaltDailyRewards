@@ -55,6 +55,16 @@ class RewardScheduler {
     return this.collectRunning;
   }
 
+  createCollectJob(source) {
+    const lastRun = this.rewardsRepository.getLast();
+    const id = (lastRun ? lastRun.id : 0) + 1;
+    return {
+      id,
+      source,
+      label: `Collect #${id}`
+    };
+  }
+
   start() {
     this.scheduleAt(this.resolveStartupNextRun(this.sessionRepository.getState()));
     this.startHeartbeat();
@@ -181,19 +191,25 @@ class RewardScheduler {
 
     this.collectRunning = true;
     let finalResult;
+    const job = this.createCollectJob(source);
 
     try {
+      if (this.collector.statusReporter) {
+        this.collector.statusReporter.setContext(job);
+      }
+      logger.debug({ job }, 'Starting reward collection job');
+      this.collector.report(`Старт збору (${source})`);
       await removeOldFiles(config.storage.rewardImagesDir, config.storage.imageRetentionDays);
       await removeOldFiles(config.storage.debugSnapshotsDir, config.storage.debugSnapshotRetentionDays);
-      finalResult = await this.collector.collect();
+      finalResult = await this.collector.collect(job);
 
       if (allowRetries && finalResult.status === 'unavailable') {
         for (let attempt = 1; attempt <= config.runtime.rewardRetryCount; attempt += 1) {
-          const text = `Подарунки ще недоступні. Спроба ${attempt}/${config.runtime.rewardRetryCount} буде пізніше.`;
+          const text = `${job.label}: Подарунки ще недоступні. Спроба ${attempt}/${config.runtime.rewardRetryCount} буде пізніше.`;
           logger.warn(text);
           if (this.notify) await this.notify({ type: 'info', text });
           await delay(config.runtime.rewardRetryDelayMs);
-          finalResult = await this.collector.collect();
+          finalResult = await this.collector.collect(job);
           if (finalResult.status !== 'unavailable') break;
         }
       }
@@ -211,9 +227,14 @@ class RewardScheduler {
         imagePaths: [],
         description: 'Reward collection failed',
         error: userError,
-        technicalStatus: 'collector_error'
+        technicalStatus: 'collector_error',
+        jobId: job.id,
+        source
       };
     } finally {
+      if (this.collector.statusReporter) {
+        this.collector.statusReporter.clearContext();
+      }
       this.collectRunning = false;
       await this.collector.authFlow.closeIfIdle();
     }
@@ -256,6 +277,8 @@ class RewardScheduler {
 
     const resultWithSchedule = {
       ...finalResult,
+      jobId: finalResult.jobId || job.id,
+      source: finalResult.source || source,
       id: run.id,
       createdAt: run.createdAt,
       nextRunAt,
