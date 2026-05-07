@@ -21,8 +21,10 @@ function extractRewardNameFromText(text) {
     .map((line) => line.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
 
-  const directQuantity = lines.find((line) => /^\d+\s*x\s+.+/i.test(line));
-  if (directQuantity) return directQuantity.replace(/^(\d+)\s*x\s+/i, '$1x ');
+  const directQuantity = lines.find((line) => /^[•\-*\s]*(\d+)\s*x\s+.+/i.test(line));
+  if (directQuantity) {
+    return directQuantity.replace(/^[•\-*\s]*(\d+)\s*x\s+/i, '$1x ');
+  }
 
   const quantityIndex = lines.findIndex((line) => /^quantity$/i.test(line));
   if (quantityIndex > 0) {
@@ -35,6 +37,8 @@ function extractRewardNameFromText(text) {
 
   return lines.find((line) => {
     if (/^(free|claim|order summary|summary|total|continue|done|back|price|quantity)$/i.test(line)) return false;
+    if (/cookies?|privacy policy|terms of use|personal data|legitimate business interest|with your agreement/i.test(line)) return false;
+    if (line.length > 120) return false;
     if (/^\$|^0$/.test(line)) return false;
     return /[a-zа-я_]/i.test(line);
   }) || null;
@@ -100,13 +104,13 @@ async function claimReward(page, reward) {
   await reward.freeButton.click();
 
   const claimButton = page.locator(selectors.claimButton).first();
-  const claimVisible = await claimButton.waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false);
-  if (claimVisible) {
-    await claimButton.click();
-  }
+  await claimButton.waitFor({ state: 'visible', timeout: config.runtime.selectorTimeoutMs });
+  const orderName = await readClaimedRewardName(page, reward.name);
+  await claimButton.click();
 
-  await page.waitForURL('**/purchase-success**', { timeout: config.runtime.claimTimeoutMs }).catch(() => {});
+  await page.waitForURL('**/purchase-success**', { timeout: config.runtime.claimTimeoutMs });
   await page.waitForTimeout(1500);
+  return orderName;
 }
 
 async function readClaimedRewardName(page, fallback) {
@@ -127,8 +131,7 @@ async function parseAndClaimNextReward(page, index) {
     logger.debug({ error, imageUrl: reward.imageUrl }, 'Reward image was not saved');
   }
 
-  await claimReward(page, reward);
-  const claimedName = await readClaimedRewardName(page, reward.name);
+  const claimedName = await claimReward(page, reward);
 
   if (!imagePath) {
     const successImageUrl = await page.locator(selectors.rewardImage).first().getAttribute('src').catch(() => null);

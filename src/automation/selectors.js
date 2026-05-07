@@ -8,5 +8,6 @@ module.exports = {
   freeRewardLabel: 'div:text-is("Free")',
   freeRewardButton: 'button:has-text("Free")',
   rewardImage: 'img[src*="webstore_"], img[src]',
-  claimButton: 'button:has-text("Claim"), [class*="claim"], div:text-is("Claim")'
+  orderSummary: 'text="ORDER SUMMARY", text="Order Summary"',
+  claimButton: 'button:has-text("Claim")'
 };
