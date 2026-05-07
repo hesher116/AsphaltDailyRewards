@@ -69,7 +69,7 @@ async function findDailyFreeGiftButtons(page) {
     if (!/\bFree\b/i.test(compact)) continue;
     if (/Free Daily Gift/i.test(compact)) continue;
 
-    const card = button.locator('xpath=ancestor::*[.//img and .//*[contains(normalize-space(), "Free Gift")] and .//*[contains(normalize-space(), "Purchase limit")]][1]');
+    const card = await findRewardCardForButton(button);
     const cardVisible = await card.isVisible({ timeout: 1000 }).catch(() => false);
     if (!cardVisible) continue;
 
@@ -79,28 +79,60 @@ async function findDailyFreeGiftButtons(page) {
   return matches;
 }
 
-async function findCurrentFreeReward(page, index) {
+async function findRewardCardForButton(button) {
+  const candidates = [
+    'xpath=ancestor::*[.//img and .//*[contains(normalize-space(), "Free Gift")] and .//*[contains(normalize-space(), "Purchase limit")]][1]',
+    'xpath=ancestor::*[.//img and .//*[contains(normalize-space(), "Free Gift")]][1]',
+    'xpath=ancestor::*[.//img][1]'
+  ];
+
+  for (const selector of candidates) {
+    const card = button.locator(selector);
+    if (await card.isVisible({ timeout: 500 }).catch(() => false)) return card;
+  }
+
+  return button.locator('xpath=ancestor::*[1]');
+}
+
+async function hasDailyGiftSection(page) {
+  const bodyText = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '');
+  return /Free Daily Gift|Daily Gift|Free Gift/i.test(bodyText);
+}
+
+async function findCurrentFreeReward(page, index, reportStatus) {
   await scrollForRewards(page);
   await closeCookieNotice(page);
   const rewards = await findDailyFreeGiftButtons(page);
+  if (reportStatus) {
+    reportStatus(`Знайшов ${rewards.length} доступних Free Gift карток`);
+  }
+
   const reward = rewards[0];
   if (!reward) {
-    throw new Error('No available daily free gift button was found');
+    const sectionFound = await hasDailyGiftSection(page);
+    throw new Error(sectionFound
+      ? 'Daily gifts section was found, but no available Free buttons were visible'
+      : 'Daily gifts section was not found on the shop page');
   }
 
   const rawText = await reward.card.innerText({ timeout: 5000 }).catch(() => '');
   const imageUrl = await reward.card.locator(selectors.rewardImage).first().getAttribute('src').catch(() => null);
+  const fallbackName = `Daily reward #${index}`;
+  const name = safeRewardName(rawText, fallbackName);
+  if (reportStatus) {
+    reportStatus(`Обрав подарунок #${index}: ${name}`);
+  }
 
   return {
     index,
     freeButton: reward.button,
-    name: safeRewardName(rawText, `Daily reward #${index}`),
+    name,
     imageUrl
   };
 }
 
 async function parseAndClaimNextReward(page, index, reportStatus) {
-  const reward = await findCurrentFreeReward(page, index);
+  const reward = await findCurrentFreeReward(page, index, reportStatus);
   let imagePath = null;
   let imageWarning = null;
 
