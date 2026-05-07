@@ -263,6 +263,8 @@ This restart notification is the only intentional exception to the one-dashboard
 
 ## Troubleshooting
 
+For a full step-by-step validation flow, see [TESTING.md](./TESTING.md).
+
 Telegram says chat not found:
 
 - open the bot in Telegram;
