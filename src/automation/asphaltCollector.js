@@ -42,7 +42,7 @@ class AsphaltCollector {
     const page = this.authFlow.getPage();
     await page.locator('body').waitFor({ state: 'visible', timeout: config.runtime.selectorTimeoutMs });
     const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
-    if (!bodyText || bodyText.length < 20) {
+    if (!bodyText || bodyText.length < 20 || !/Asphalt Legends|Free Daily Gift|Log in|Gameloft/i.test(bodyText)) {
       throw new Error('Selector health check failed: shop page body is empty');
     }
   }

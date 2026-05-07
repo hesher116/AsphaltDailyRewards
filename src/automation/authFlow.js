@@ -59,11 +59,55 @@ class AuthFlow {
     await this.ensureBrowser();
     const page = this.getPage();
     this.report('Відкриваю сайт Gameloft');
-    await page.goto(config.asphalt.shopUrl, {
-      waitUntil,
-      timeout: config.runtime.navigationTimeoutMs
-    });
-    await page.waitForTimeout(2500);
+    await this.gotoAndWaitForShop(page, waitUntil);
+  }
+
+  async gotoAndWaitForShop(page, waitUntil) {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      if (attempt === 1) {
+        await page.goto(config.asphalt.shopUrl, {
+          waitUntil,
+          timeout: config.runtime.navigationTimeoutMs
+        });
+      } else {
+        logger.warn('Сторінка магазину ще не завантажилась, оновлюю її');
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: config.runtime.navigationTimeoutMs }).catch(() => {});
+      }
+
+      const ready = await this.waitForShopContent(page);
+      if (ready) return;
+    }
+
+    throw new Error('Shop page did not finish loading');
+  }
+
+  async waitForShopContent(page) {
+    const deadline = Date.now() + config.runtime.navigationTimeoutMs;
+
+    while (Date.now() < deadline) {
+      const state = await page.evaluate(() => {
+        const root = document.querySelector('#root');
+        const bodyText = document.body ? document.body.innerText : '';
+        return {
+          rootChildren: root ? root.children.length : 0,
+          bodyText: bodyText.slice(0, 1000)
+        };
+      }).catch(() => ({ rootChildren: 0, bodyText: '' }));
+
+      if (
+        state.rootChildren > 0 &&
+        /Asphalt Legends|Free Daily Gift|Log in|Gameloft/i.test(state.bodyText) &&
+        !/You need to enable JavaScript to run this app\.$/i.test(state.bodyText.trim())
+      ) {
+        await page.waitForTimeout(1000);
+        return true;
+      }
+
+      await page.waitForTimeout(1500);
+    }
+
+    logger.debug({ url: page.url() }, 'Shop app was not mounted in time');
+    return false;
   }
 
   async isLoggedIn() {
