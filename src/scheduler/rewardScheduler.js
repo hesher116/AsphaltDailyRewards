@@ -4,6 +4,7 @@ const { delay, nowIso, formatDateTimeForLog } = require('../utils/time');
 const { removeOldFiles } = require('../utils/fileCleanup');
 const { savePageSnapshot } = require('../utils/debugSnapshot');
 const { safeWriteLastCollect } = require('../utils/runtimeState');
+const { isCollectSuccess, normalizeCollectResult } = require('../automation/collectResult');
 
 function randomOffsetMs() {
   const min = config.scheduler.minJitterMs;
@@ -239,16 +240,21 @@ class RewardScheduler {
       await this.collector.authFlow.closeIfIdle();
     }
 
-    const success = finalResult.status === 'success' || finalResult.status === 'partial';
+    finalResult = normalizeCollectResult(finalResult, { job, source });
+    const success = isCollectSuccess(finalResult.status);
     const now = nowIso();
     let nextRunAt;
+    let scheduleChanged = false;
+    let schedulePreserved = false;
 
     if (success) {
       nextRunAt = this.scheduleNextAfterSuccess();
       await safeWriteLastCollect(new Date().toISOString());
+      scheduleChanged = true;
     } else if (source === 'manual') {
       nextRunAt = this.preserveExistingSchedule();
       this.sessionRepository.update({ lastRunAt: now });
+      schedulePreserved = true;
       if (finalResult.status === 'unavailable') {
         logger.warn(`Подарунки зараз недоступні. Наступний збір уже запланований на ${formatDateTimeForLog(nextRunAt)}`);
       }
@@ -276,13 +282,16 @@ class RewardScheduler {
     });
 
     const resultWithSchedule = {
-      ...finalResult,
-      jobId: finalResult.jobId || job.id,
-      source: finalResult.source || source,
+      ...normalizeCollectResult(finalResult, {
+        job,
+        source,
+        nextRunAt,
+        scheduleChanged,
+        schedulePreserved
+      }),
       id: run.id,
       createdAt: run.createdAt,
-      nextRunAt,
-      schedulePreserved: !success && source === 'manual'
+      nextRunAt
     };
 
     if (notify && this.notify) {

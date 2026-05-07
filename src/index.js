@@ -6,6 +6,7 @@ const RewardsRepository = require('./storage/rewardsRepository');
 const SessionRepository = require('./storage/sessionRepository');
 const AuthFlow = require('./automation/authFlow');
 const AsphaltCollector = require('./automation/asphaltCollector');
+const { buildCollectSummary, collectStatusTitle } = require('./automation/collectResult');
 const RewardScheduler = require('./scheduler/rewardScheduler');
 const StatusReporter = require('./status/statusReporter');
 const Dashboard = require('./bot/dashboard');
@@ -154,23 +155,12 @@ async function bootstrap() {
       if (event.type !== 'collect_result') return;
 
       if (dashboard) {
-        const status = event.result.status === 'success'
-          ? 'Плановий збір завершено успішно'
-          : event.result.status === 'partial'
-            ? 'Плановий збір завершено частково'
-          : event.result.status === 'session_lost'
-            ? 'Потрібна повторна авторизація'
-            : 'Подарунки зараз недоступні';
-        const rewards = (event.result.rewards || []).map((reward) => reward.name).join('; ') || 'нагороди не отримано';
-        const progress = Number.isFinite(event.result.collectedCount) && Number.isFinite(event.result.expectedCount)
-          ? `collected ${event.result.collectedCount}/${event.result.expectedCount}`
-          : event.result.technicalStatus || 'unknown';
-        const jobText = event.result.jobId ? `Collect #${event.result.jobId}: ` : '';
+        const status = collectStatusTitle(event.result, true);
         await dashboard.setStatus(
           status,
           {
             action: status,
-            message: `${jobText}Результат: ${rewards}. Статус: ${progress}. Наступний збір: ${formatDateTime(event.result.nextRunAt)}`
+            message: buildCollectSummary(event.result, event.result.nextRunAt, { scheduled: true })
           }
         );
       }

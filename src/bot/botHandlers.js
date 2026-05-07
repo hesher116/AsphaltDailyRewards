@@ -1,6 +1,7 @@
 const config = require('../config');
 const { formatDateTime } = require('../utils/time');
 const { sendMessageToChat } = require('./telegramBot');
+const { buildCollectSummary, collectStatusTitle } = require('../automation/collectResult');
 
 const CALLBACK_COOLDOWN_MS = 1200;
 
@@ -52,23 +53,6 @@ function formatStatus(sessionRepository, scheduler) {
     `Наступний запуск: ${formatDateTime(state.nextRunAt)}`,
     `Збір зараз: ${scheduler.isRunning() ? 'виконується' : 'не виконується'}`
   ].join(' | ');
-}
-
-function collectionSummary(result, nextRunAt) {
-  const rewardText = rewardLines(result.rewards).replace(/\n/g, '; ');
-  const jobText = result.jobId ? `Collect #${result.jobId}. ` : '';
-  const progress = Number.isFinite(result.collectedCount) && Number.isFinite(result.expectedCount)
-    ? ` Статус: collected ${result.collectedCount}/${result.expectedCount}.`
-    : '';
-  const prefix = result.status === 'success'
-    ? 'Щоденні нагороди зібрано успішно.'
-    : result.status === 'partial'
-      ? 'Зібрано частину щоденних нагород.'
-      : result.status === 'session_lost'
-        ? 'Потрібна повторна авторизація.'
-        : 'Щоденні нагороди зараз недоступні.';
-  const preserved = result.schedulePreserved ? ' Графік не змінено: це була невдала ручна спроба.' : '';
-  return `${jobText}${prefix} Отримано: ${rewardText}.${progress} Наступний збір: ${formatDateTime(nextRunAt)}.${preserved}`;
 }
 
 async function withActionLock(ctx, actionName, action) {
@@ -185,7 +169,7 @@ async function collectNow(ctx) {
       return;
     }
 
-    const message = collectionSummary(result, result.nextRunAt);
+    const message = buildCollectSummary(result, result.nextRunAt);
     if (result.status === 'session_lost') {
       await ctx.dashboard.setStatus('Потрібна повторна авторизація', {
         action: 'Сесія втрачена',
@@ -201,7 +185,7 @@ async function collectNow(ctx) {
       return;
     }
 
-    const doneStatus = result.status === 'partial' ? 'Зібрано частину подарунків' : 'Збір завершено';
+    const doneStatus = collectStatusTitle(result);
     await ctx.dashboard.setStatus(doneStatus, {
       action: doneStatus,
       message
