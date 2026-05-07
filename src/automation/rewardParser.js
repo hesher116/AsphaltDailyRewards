@@ -80,26 +80,31 @@ async function saveImageFromUrl(page, imageUrl, index) {
 
 async function findCurrentFreeReward(page, index) {
   await scrollForRewards(page);
-  const freeLabel = page.locator(selectors.freeRewardLabel).first();
-  await freeLabel.waitFor({ state: 'visible', timeout: 5000 });
+  const freeButton = page.locator(selectors.freeRewardButton).first();
+  await freeButton.waitFor({ state: 'visible', timeout: 5000 });
 
-  const card = freeLabel.locator('xpath=./parent::div/parent::div/parent::div');
+  const card = freeButton.locator('xpath=ancestor::*[.//img][1]');
   const rawText = await card.innerText({ timeout: 5000 }).catch(() => '');
   const imageUrl = await card.locator(selectors.rewardImage).first().getAttribute('src').catch(() => null);
 
   return {
     index,
-    freeLabel,
+    freeButton,
     name: safeRewardName(rawText, `Daily reward #${index}`),
     imageUrl
   };
 }
 
 async function claimReward(page, reward) {
-  await reward.freeLabel.click();
+  await reward.freeButton.scrollIntoViewIfNeeded().catch(() => {});
+  await reward.freeButton.click();
+
   const claimButton = page.locator(selectors.claimButton).first();
-  await claimButton.waitFor({ state: 'visible', timeout: 5000 });
-  await claimButton.click();
+  const claimVisible = await claimButton.waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false);
+  if (claimVisible) {
+    await claimButton.click();
+  }
+
   await page.waitForURL('**/purchase-success**', { timeout: config.runtime.claimTimeoutMs }).catch(() => {});
   await page.waitForTimeout(1500);
 }
