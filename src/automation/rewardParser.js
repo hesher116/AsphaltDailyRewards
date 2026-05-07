@@ -103,9 +103,16 @@ async function claimReward(page, reward) {
   await reward.freeButton.scrollIntoViewIfNeeded().catch(() => {});
   await reward.freeButton.click();
 
+  await page.waitForLoadState('domcontentloaded', { timeout: config.runtime.navigationTimeoutMs }).catch(() => {});
+  await page.locator(selectors.orderSummary).first().waitFor({
+    state: 'visible',
+    timeout: config.runtime.selectorTimeoutMs
+  });
+
   const claimButton = page.locator(selectors.claimButton).first();
   await claimButton.waitFor({ state: 'visible', timeout: config.runtime.selectorTimeoutMs });
   const orderName = await readClaimedRewardName(page, reward.name);
+  await claimButton.scrollIntoViewIfNeeded().catch(() => {});
   await claimButton.click();
 
   await page.waitForURL('**/purchase-success**', { timeout: config.runtime.claimTimeoutMs });

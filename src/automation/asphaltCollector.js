@@ -3,6 +3,7 @@ const selectors = require('./selectors');
 const { parseAndClaimNextReward } = require('./rewardParser');
 const logger = require('../utils/logger');
 const { nowIso } = require('../utils/time');
+const { savePageSnapshot } = require('../utils/debugSnapshot');
 
 class AsphaltCollector {
   constructor(authFlow, sessionRepository, statusReporter) {
@@ -82,6 +83,10 @@ class AsphaltCollector {
       } catch (error) {
         errors.push(`Reward #${index}: ${error.message}`);
         logger.debug({ error: error.message, index }, 'No more available rewards or claim failed');
+        const snapshotPath = await savePageSnapshot(page, `reward-${index}-failed`);
+        if (snapshotPath) {
+          logger.warn(`Збережено debug snapshot подарунка: ${snapshotPath}`);
+        }
         break;
       }
     }

@@ -9,5 +9,5 @@ module.exports = {
   freeRewardButton: 'button:has-text("Free")',
   rewardImage: 'img[src*="webstore_"], img[src]',
   orderSummary: 'text="ORDER SUMMARY", text="Order Summary"',
-  claimButton: 'button:has-text("Claim")'
+  claimButton: 'button:has-text("Claim"), [role="button"]:has-text("Claim"), div:text-is("Claim"), text="Claim"'
 };
