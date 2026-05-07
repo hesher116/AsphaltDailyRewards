@@ -4,7 +4,8 @@ const { delay, nowIso, formatDateTimeForLog } = require('../utils/time');
 const { removeOldFiles } = require('../utils/fileCleanup');
 const { savePageSnapshot } = require('../utils/debugSnapshot');
 const { safeWriteLastCollect } = require('../utils/runtimeState');
-const { isCollectSuccess, normalizeCollectResult } = require('../automation/collectResult');
+const { normalizeCollectResult } = require('../automation/collectResult');
+const { decideScheduleAction } = require('./schedulerPolicy');
 
 function randomOffsetMs() {
   const min = config.scheduler.minJitterMs;
@@ -241,31 +242,31 @@ class RewardScheduler {
     }
 
     finalResult = normalizeCollectResult(finalResult, { job, source });
-    const success = isCollectSuccess(finalResult.status);
+    const scheduleDecision = decideScheduleAction({ result: finalResult, source });
     const now = nowIso();
     let nextRunAt;
-    let scheduleChanged = false;
-    let schedulePreserved = false;
 
-    if (success) {
+    if (scheduleDecision.action === 'reschedule_after_success') {
       nextRunAt = this.scheduleNextAfterSuccess();
       await safeWriteLastCollect(new Date().toISOString());
-      scheduleChanged = true;
-    } else if (source === 'manual') {
+      logger.info(`${job.label}: ${scheduleDecision.message}`);
+    } else if (scheduleDecision.action === 'preserve_manual_failure') {
       nextRunAt = this.preserveExistingSchedule();
       this.sessionRepository.update({ lastRunAt: now });
-      schedulePreserved = true;
+      logger.warn(`${job.label}: ${scheduleDecision.message}. Наступний збір: ${formatDateTimeForLog(nextRunAt)}`);
       if (finalResult.status === 'unavailable') {
         logger.warn(`Подарунки зараз недоступні. Наступний збір уже запланований на ${formatDateTimeForLog(nextRunAt)}`);
       }
-    } else if (source === 'startup') {
+    } else if (scheduleDecision.action === 'preserve_startup_failure') {
       nextRunAt = this.preserveExistingSchedule();
       this.sessionRepository.update({ lastRunAt: now });
+      logger.warn(`${job.label}: ${scheduleDecision.message}. Наступний збір: ${formatDateTimeForLog(nextRunAt)}`);
     } else {
       const nextDate = this.computeNextFrom(new Date());
       nextRunAt = nextDate.toISOString();
       this.sessionRepository.update({ lastRunAt: now, nextRunAt });
       this.scheduleAt(nextDate);
+      logger.warn(`${job.label}: ${scheduleDecision.message}. Наступний збір: ${formatDateTimeForLog(nextRunAt)}`);
     }
 
     if (finalResult.status === 'session_lost') {
@@ -286,8 +287,8 @@ class RewardScheduler {
         job,
         source,
         nextRunAt,
-        scheduleChanged,
-        schedulePreserved
+        scheduleChanged: scheduleDecision.scheduleChanged,
+        schedulePreserved: scheduleDecision.schedulePreserved
       }),
       id: run.id,
       createdAt: run.createdAt,
