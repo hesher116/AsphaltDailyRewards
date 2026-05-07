@@ -128,12 +128,12 @@ class Dashboard {
     await this.render();
   }
 
-  async setStatus(status, { action, lastAction, message, lastMessage, operation } = {}) {
+  async setStatus(status, { action, message, operation } = {}) {
     this.state.currentView = 'dashboard';
     this.state.status = status || this.state.status;
-    this.state.currentOperation = operation || action || lastAction || status || this.state.currentOperation;
-    this.addAction(action || lastAction || status);
-    this.addMessage(message || lastMessage || status);
+    this.state.currentOperation = operation || action || status || this.state.currentOperation;
+    this.addAction(action || status);
+    this.addMessage(message || status);
     await this.render();
   }
 

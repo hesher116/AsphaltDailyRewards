@@ -2,19 +2,6 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function addMs(date, ms) {
-  return new Date(date.getTime() + ms);
-}
-
-function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function nextDailyRunDate(config) {
-  const jitter = randomInt(config.scheduler.minJitterMs, config.scheduler.maxJitterMs);
-  return addMs(new Date(), config.scheduler.baseDelayMs + jitter);
-}
-
 function formatDateTime(isoOrDate) {
   if (!isoOrDate) return 'unknown';
   const date = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
@@ -53,7 +40,6 @@ function delay(ms) {
 
 module.exports = {
   nowIso,
-  nextDailyRunDate,
   formatDateTime,
   formatDateTimeForLog,
   delay

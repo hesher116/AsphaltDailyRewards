@@ -296,20 +296,6 @@ async function sendPhotoToChat(bot, chatId, photoPath, caption, options = {}) {
   }
 }
 
-async function editCaption(bot, chatId, messageId, caption, options = {}) {
-  try {
-    return await bot.editMessageCaption(caption, {
-      chat_id: chatId,
-      message_id: messageId,
-      ...options
-    });
-  } catch (error) {
-    if (String(error.message || '').includes('message is not modified')) return true;
-    logger.debug({ error }, 'editMessageCaption failed');
-    return null;
-  }
-}
-
 async function editPhotoMedia(bot, chatId, messageId, photoPath, caption, options = {}) {
   try {
     return await bot.editMessageMedia(
@@ -353,7 +339,6 @@ module.exports = {
   sendMessageToChat,
   sendPhotoToChat,
   editMessage,
-  editCaption,
   editPhotoMedia,
   sendAdminMessage,
   deleteMessageSafe,
