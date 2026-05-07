@@ -40,9 +40,15 @@ module.exports = {
     engine: (process.env.BROWSER_ENGINE || 'chromium').toLowerCase(),
     headless: boolFromEnv(process.env.HEADLESS, false),
     profileDir: resolvePath(process.env.BROWSER_PROFILE_DIR, path.join(dataDir, 'browser-profile')),
-    viewport: { width: 1280, height: 800 },
-    executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || '',
-    extraArgs: listFromEnv(process.env.CHROMIUM_EXTRA_ARGS)
+    viewport: {
+      width: intFromEnv(process.env.VIEWPORT_WIDTH, 1366),
+      height: intFromEnv(process.env.VIEWPORT_HEIGHT, 768)
+    },
+    locale: process.env.BROWSER_LOCALE || 'en-US',
+    timezoneId: process.env.BROWSER_TIMEZONE || 'Europe/Paris',
+    userAgent: process.env.BROWSER_USER_AGENT || '',
+    executablePath: process.env.BROWSER_EXECUTABLE_PATH || process.env.CHROMIUM_EXECUTABLE_PATH || '',
+    extraArgs: listFromEnv(process.env.BROWSER_EXTRA_ARGS || process.env.CHROMIUM_EXTRA_ARGS)
   },
   storage: {
     dataDir,

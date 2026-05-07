@@ -20,7 +20,14 @@ class AuthFlow {
     await fs.mkdir(config.browser.profileDir, { recursive: true });
 
     this.report('Запускаю браузер');
-    logger.debug({ engine: config.browser.engine, headless: config.browser.headless, profileDir: config.browser.profileDir }, 'Параметри браузера');
+    logger.debug({
+      engine: config.browser.engine,
+      headless: config.browser.headless,
+      profileDir: config.browser.profileDir,
+      viewport: config.browser.viewport,
+      locale: config.browser.locale,
+      timezoneId: config.browser.timezoneId
+    }, 'Параметри браузера');
 
     this.context = await launchPersistentBrowserContext(config.browser.profileDir);
 
