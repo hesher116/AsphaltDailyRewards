@@ -13,6 +13,20 @@ const {
 const MAX_RECENT_ITEMS = 5;
 const MAX_CAPTION_LENGTH = 1000;
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function formatTime(isoOrDate) {
+  const date = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+  if (Number.isNaN(date.getTime())) return '--:--:--';
+  return date.toLocaleTimeString('uk-UA', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+}
+
 function truncate(text, limit) {
   const value = String(text || '').trim();
   if (value.length <= limit) return value;
@@ -34,8 +48,9 @@ class Dashboard {
     this.scheduler = scheduler;
     this.state = {
       status: 'Очікую команду',
-      recentActions: ['Запуск системи'],
-      recentMessages: ['Очікую команду'],
+      currentOperation: 'Очікую команду',
+      recentActions: [{ text: 'Запуск системи', at: nowIso() }],
+      recentMessages: [{ text: 'Очікую команду', at: nowIso() }],
       recentCollects: [],
       currentView: 'dashboard',
       historyRuns: []
@@ -66,8 +81,9 @@ class Dashboard {
     const text = truncate(value, 140);
     if (!text) return;
     const list = this.state[listName];
-    if (list[list.length - 1] === text) return;
-    list.push(text);
+    const last = list[list.length - 1];
+    if (this.entryText(last) === text) return;
+    list.push({ text, at: nowIso() });
     this.state[listName] = list.slice(-MAX_RECENT_ITEMS);
   }
 
@@ -84,7 +100,14 @@ class Dashboard {
   parsePersistedList(value, fallback) {
     try {
       const parsed = JSON.parse(value || '[]');
-      return Array.isArray(parsed) && parsed.length ? parsed.slice(-MAX_RECENT_ITEMS) : fallback;
+      if (!Array.isArray(parsed) || !parsed.length) return fallback;
+      return parsed.map((item) => {
+        if (typeof item === 'string') return { text: item, at: null };
+        return {
+          text: item && item.text ? String(item.text) : '',
+          at: item && item.at ? item.at : null
+        };
+      }).filter((item) => item.text).slice(-MAX_RECENT_ITEMS);
     } catch {
       return fallback;
     }
@@ -99,14 +122,16 @@ class Dashboard {
 
   async setBusy(value, action) {
     this.busy = value;
+    this.state.currentOperation = value ? action || 'Виконується дія' : 'Очікую команду';
     if (action) this.addAction(action);
     if (value) this.state.currentView = 'dashboard';
     await this.render();
   }
 
-  async setStatus(status, { action, lastAction, message, lastMessage } = {}) {
+  async setStatus(status, { action, lastAction, message, lastMessage, operation } = {}) {
     this.state.currentView = 'dashboard';
     this.state.status = status || this.state.status;
+    this.state.currentOperation = operation || action || lastAction || status || this.state.currentOperation;
     this.addAction(action || lastAction || status);
     this.addMessage(message || lastMessage || status);
     await this.render();
@@ -204,6 +229,8 @@ class Dashboard {
     const persisted = this.sessionRepository.getState();
     const labels = statusLabels(persisted.authStatus);
     const status = this.busy ? this.state.status || 'Виконується дія' : this.state.status;
+    const operation = this.busy ? this.state.currentOperation : 'Очікую команду';
+    const collectState = this.scheduler && this.scheduler.isRunning() ? 'Виконується' : 'Не виконується';
     const actions = this.formatList(this.state.recentActions, 'Поки немає дій');
     const messages = this.formatList(this.state.recentMessages, 'Поки немає повідомлень');
 
@@ -211,6 +238,8 @@ class Dashboard {
       'Asphalt Daily Rewards',
       '',
       `Статус: ${status}`,
+      `Операція: ${operation}`,
+      `Збір: ${collectState}`,
       `Сесія: ${labels.sessionStatus}`,
       `OTP: ${labels.otpStatus}`,
       `Останній успішний збір: ${formatDateTime(persisted.lastSuccessfulCollectAt)}`,
@@ -277,8 +306,19 @@ class Dashboard {
 
   formatList(items, emptyText) {
     return items.length
-      ? items.map((item) => `- ${item}`).join('\n')
+      ? items.map((item) => `- ${this.formatEntry(item)}`).join('\n')
       : `- ${emptyText}`;
+  }
+
+  entryText(item) {
+    if (typeof item === 'string') return item;
+    return item && item.text ? item.text : '';
+  }
+
+  formatEntry(item) {
+    if (typeof item === 'string') return item;
+    const time = item.at ? `[${formatTime(item.at)}] ` : '';
+    return `${time}${item.text}`;
   }
 }
 
