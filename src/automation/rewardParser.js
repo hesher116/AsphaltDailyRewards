@@ -99,7 +99,7 @@ async function waitForMountedApp(page) {
   throw new Error(`Checkout app did not finish loading. Last root text: ${lastRootText || 'empty'}`);
 }
 
-async function waitForCheckoutReady(page) {
+async function waitForCheckoutReady(page, reportStatus) {
   await page.waitForURL('**/purchase-checkout/**', { timeout: config.runtime.navigationTimeoutMs });
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -112,7 +112,9 @@ async function waitForCheckoutReady(page) {
       return;
     } catch (error) {
       if (attempt === 3) throw error;
-      logger.warn('Checkout сторінка ще не завантажилась, оновлюю її');
+      const message = 'Checkout сторінка ще не завантажилась, оновлюю її';
+      if (reportStatus) reportStatus(message, 'warn');
+      else logger.warn(message);
       logger.debug({ error: error.message, attempt }, 'Checkout page was not ready');
       await page.reload({ waitUntil: 'domcontentloaded', timeout: config.runtime.navigationTimeoutMs }).catch(() => {});
       await page.waitForTimeout(3000);
@@ -193,16 +195,17 @@ async function findCurrentFreeReward(page, index) {
   };
 }
 
-async function claimReward(page, reward) {
+async function claimReward(page, reward, reportStatus) {
   await reward.freeButton.scrollIntoViewIfNeeded().catch(() => {});
   await reward.freeButton.click();
 
-  await waitForCheckoutReady(page);
+  await waitForCheckoutReady(page, reportStatus);
 
   const claimButton = page.locator(selectors.claimButton).first();
   await claimButton.waitFor({ state: 'visible', timeout: config.runtime.selectorTimeoutMs });
   const orderName = await readClaimedRewardName(page, reward.name);
   await claimButton.scrollIntoViewIfNeeded().catch(() => {});
+  if (reportStatus) reportStatus('Натискаю Claim на checkout сторінці');
   await claimButton.click();
 
   await page.waitForURL('**/purchase-success**', { timeout: config.runtime.claimTimeoutMs });
@@ -215,7 +218,7 @@ async function readClaimedRewardName(page, fallback) {
   return extractRewardNameFromText(bodyText) || fallback;
 }
 
-async function parseAndClaimNextReward(page, index) {
+async function parseAndClaimNextReward(page, index, reportStatus) {
   const reward = await findCurrentFreeReward(page, index);
   let imagePath = null;
   let imageWarning = null;
@@ -228,7 +231,7 @@ async function parseAndClaimNextReward(page, index) {
     logger.debug({ error, imageUrl: reward.imageUrl }, 'Reward image was not saved');
   }
 
-  const claimedName = await claimReward(page, reward);
+  const claimedName = await claimReward(page, reward, reportStatus);
 
   if (!imagePath) {
     const successImageUrl = await page.locator(selectors.rewardImage).first().getAttribute('src').catch(() => null);

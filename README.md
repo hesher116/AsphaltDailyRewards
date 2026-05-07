@@ -19,6 +19,7 @@ The app is intentionally small: one Telegram bot, one scheduler, one browser aut
 - PM2 config for 24/7 deployment
 - PM2 crash/reboot restart notification with auto-delete TTL
 - Startup auto-collect if the last successful collect was more than 24h10m ago
+- Heartbeat log/dashboard update so long-running mode is visibly alive
 
 ## Dashboard
 
@@ -59,6 +60,12 @@ If the dashboard message is deleted or cannot be edited, run:
 - Gameloft account email
 - Playwright Chromium browser
 
+On constrained aarch64/proot Linux environments, Chromium may crash on real navigation. In that case use Firefox:
+
+```env
+BROWSER_ENGINE=firefox
+```
+
 ## Installation
 
 ```bash
@@ -69,6 +76,12 @@ npx playwright install chromium
 cp .env.example .env
 ```
 
+If you plan to use Firefox:
+
+```bash
+npx playwright install firefox
+```
+
 Fill `.env`:
 
 ```env
@@ -77,6 +90,12 @@ TELEGRAM_CHAT_ID=123456789
 ASPHALT_EMAIL=you@example.com
 HEADLESS=true
 DEBUG=false
+```
+
+If Chromium closes unexpectedly on a phone/proot Linux server, use:
+
+```env
+BROWSER_ENGINE=firefox
 ```
 
 To discover your chat id:
@@ -152,6 +171,14 @@ Logs:
 npm run pm2:logs
 ```
 
+Useful PM2 commands:
+
+```bash
+npm run pm2:status
+npm run pm2:restart
+npm run pm2:stop
+```
+
 The included [ecosystem.config.js](./ecosystem.config.js) runs one instance, restarts on crashes, and defaults to `HEADLESS=true`.
 
 ## Configuration
@@ -164,6 +191,7 @@ Important variables:
 - `TELEGRAM_CHAT_ID` - allowed Telegram chat id.
 - `ASPHALT_EMAIL` - Gameloft account email.
 - `HEADLESS` - `false` for visible local browser, `true` for server.
+- `BROWSER_ENGINE` - `chromium` by default, `firefox` for constrained Linux/proot fallback.
 - `DEBUG` - technical stack traces and raw API errors.
 - `DATA_DIR` - root storage directory.
 - `BROWSER_PROFILE_DIR` - persistent Playwright profile.
@@ -173,6 +201,7 @@ Important variables:
 - `IMAGE_RETENTION_DAYS` - reward image cleanup window.
 - `DEBUG_SNAPSHOT_RETENTION_DAYS` - debug snapshot cleanup window.
 - `RESTART_NOTIFICATION_TTL_HOURS` - how long the temporary PM2 restart notification stays in Telegram.
+- `HEARTBEAT_INTERVAL_HOURS` - how often the app logs and updates the dashboard that it is still running.
 
 ## Storage
 
@@ -218,6 +247,8 @@ Manual failed collections do not overwrite an existing valid next scheduled run.
 After restart, the scheduler restores `nextRunAt` from SQLite. If it is already due, the app schedules the collection shortly after startup.
 
 On startup, if the last successful collect was more than 24 hours and 10 minutes ago, the app starts a collection immediately before the scheduler is initialized. If this startup collection fails, the existing valid schedule is preserved.
+
+Every `HEARTBEAT_INTERVAL_HOURS` hours the app logs and updates the dashboard with a short “program is alive” status and the next scheduled collection time.
 
 ## PM2 Restart Notification
 

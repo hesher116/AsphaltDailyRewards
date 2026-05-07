@@ -46,6 +46,7 @@ class RewardScheduler {
     this.sessionRepository = sessionRepository;
     this.notify = notify;
     this.timer = null;
+    this.heartbeatTimer = null;
     this.collectRunning = false;
     this.stopped = false;
   }
@@ -56,6 +57,7 @@ class RewardScheduler {
 
   start() {
     this.scheduleAt(this.resolveStartupNextRun(this.sessionRepository.getState()));
+    this.startHeartbeat();
   }
 
   stop() {
@@ -64,6 +66,29 @@ class RewardScheduler {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    if (this.heartbeatTimer) {
+      clearTimeout(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  startHeartbeat() {
+    const intervalMs = Math.max(1, config.runtime.heartbeatIntervalHours) * 60 * 60 * 1000;
+    const tick = async () => {
+      if (this.stopped) return;
+      const state = this.sessionRepository.getState();
+      const text = `Програма працює. Наступний збір: ${formatDateTimeForLog(state.nextRunAt)}`;
+      logger.info(text);
+      if (this.notify) {
+        await this.notify({ type: 'heartbeat', text }).catch((error) => {
+          logger.debug({ error }, 'Heartbeat notification failed');
+        });
+      }
+      this.heartbeatTimer = setTimeout(tick, intervalMs);
+    };
+
+    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
+    this.heartbeatTimer = setTimeout(tick, intervalMs);
   }
 
   resolveStartupNextRun(state) {

@@ -197,8 +197,9 @@ async function collectNow(ctx) {
       return;
     }
 
-    await ctx.dashboard.setStatus('Збір завершено', {
-      action: 'Збір завершено',
+    const doneStatus = result.status === 'partial' ? 'Зібрано частину подарунків' : 'Збір завершено';
+    await ctx.dashboard.setStatus(doneStatus, {
+      action: doneStatus,
       message
     });
   });

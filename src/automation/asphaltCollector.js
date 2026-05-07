@@ -76,7 +76,7 @@ class AsphaltCollector {
         }
 
         this.report(index === 1 ? 'Забираю перший подарунок' : 'Забираю другий подарунок');
-        const reward = await parseAndClaimNextReward(page, index);
+        const reward = await parseAndClaimNextReward(page, index, (message, level) => this.report(message, level));
         rewards.push(reward);
         this.report(index === 1 ? 'Перший подарунок зібрано' : 'Другий подарунок зібрано', 'success');
         logger.debug({ reward: reward.name }, 'Reward collected');

@@ -135,11 +135,29 @@ async function bootstrap() {
     rewardsRepository,
     sessionRepository,
     notify: async (event) => {
+      if (event.type === 'info' && dashboard) {
+        await dashboard.setStatus(event.text, {
+          action: event.text,
+          message: event.text
+        });
+        return;
+      }
+
+      if (event.type === 'heartbeat' && dashboard) {
+        await dashboard.setStatus('Очікую плановий збір', {
+          action: 'Heartbeat',
+          message: event.text
+        });
+        return;
+      }
+
       if (event.type !== 'collect_result') return;
 
       if (dashboard) {
-        const status = event.result.status === 'success' || event.result.status === 'partial'
-          ? 'Плановий збір завершено'
+        const status = event.result.status === 'success'
+          ? 'Плановий збір завершено успішно'
+          : event.result.status === 'partial'
+            ? 'Плановий збір завершено частково'
           : event.result.status === 'session_lost'
             ? 'Потрібна повторна авторизація'
             : 'Подарунки зараз недоступні';
@@ -147,7 +165,7 @@ async function bootstrap() {
         await dashboard.setStatus(
           status,
           {
-            action: 'Плановий збір завершено',
+            action: status,
             message: `Результат: ${rewards}. Наступний збір: ${formatDateTime(event.result.nextRunAt)}`
           }
         );
