@@ -82,18 +82,45 @@ async function saveImageFromUrl(page, imageUrl, index) {
   return filePath;
 }
 
+async function findDailyFreeGiftButtons(page) {
+  const buttons = page.locator('button');
+  const count = await buttons.count();
+  const matches = [];
+
+  for (let i = 0; i < count; i += 1) {
+    const button = buttons.nth(i);
+    const visible = await button.isVisible().catch(() => false);
+    if (!visible) continue;
+
+    const text = await button.innerText({ timeout: 1000 }).catch(() => '');
+    const compact = text.replace(/\s+/g, ' ').trim();
+    if (!/\bFree\b/i.test(compact)) continue;
+    if (/Free Daily Gift/i.test(compact)) continue;
+
+    const card = button.locator('xpath=ancestor::*[.//img and .//*[contains(normalize-space(), "Free Gift")] and .//*[contains(normalize-space(), "Purchase limit")]][1]');
+    const cardVisible = await card.isVisible({ timeout: 1000 }).catch(() => false);
+    if (!cardVisible) continue;
+
+    matches.push({ button, card });
+  }
+
+  return matches;
+}
+
 async function findCurrentFreeReward(page, index) {
   await scrollForRewards(page);
-  const freeButton = page.locator(selectors.freeRewardButton).first();
-  await freeButton.waitFor({ state: 'visible', timeout: 5000 });
+  const rewards = await findDailyFreeGiftButtons(page);
+  const reward = rewards[index - 1];
+  if (!reward) {
+    throw new Error(`Daily free gift #${index} button was not found`);
+  }
 
-  const card = freeButton.locator('xpath=ancestor::*[.//img][1]');
-  const rawText = await card.innerText({ timeout: 5000 }).catch(() => '');
-  const imageUrl = await card.locator(selectors.rewardImage).first().getAttribute('src').catch(() => null);
+  const rawText = await reward.card.innerText({ timeout: 5000 }).catch(() => '');
+  const imageUrl = await reward.card.locator(selectors.rewardImage).first().getAttribute('src').catch(() => null);
 
   return {
     index,
-    freeButton,
+    freeButton: reward.button,
     name: safeRewardName(rawText, `Daily reward #${index}`),
     imageUrl
   };
