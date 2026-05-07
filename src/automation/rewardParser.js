@@ -177,9 +177,9 @@ async function findCurrentFreeReward(page, index) {
   await scrollForRewards(page);
   await closeCookieNotice(page);
   const rewards = await findDailyFreeGiftButtons(page);
-  const reward = rewards[index - 1];
+  const reward = rewards[0];
   if (!reward) {
-    throw new Error(`Daily free gift #${index} button was not found`);
+    throw new Error('No available daily free gift button was found');
   }
 
   const rawText = await reward.card.innerText({ timeout: 5000 }).catch(() => '');
