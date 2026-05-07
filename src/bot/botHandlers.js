@@ -1,9 +1,21 @@
 const config = require('../config');
+const logger = require('../utils/logger');
 const { formatDateTime } = require('../utils/time');
 const { sendMessageToChat } = require('./telegramBot');
 const { buildCollectSummary, collectStatusTitle } = require('../automation/collectResult');
 
 const CALLBACK_COOLDOWN_MS = 1200;
+
+const CALLBACK_LABELS = {
+  dashboard: 'dashboard',
+  login: 'login',
+  check_session: 'check_session',
+  collect: 'collect',
+  status: 'status',
+  history: 'history',
+  recent_collects: 'recent_collects',
+  help: 'help'
+};
 
 function isAdminChat(chatId) {
   return Boolean(config.telegram.chatId) && String(chatId) === String(config.telegram.chatId);
@@ -53,6 +65,11 @@ function formatStatus(sessionRepository, scheduler) {
     `Наступний запуск: ${formatDateTime(state.nextRunAt)}`,
     `Збір зараз: ${scheduler.isRunning() ? 'виконується' : 'не виконується'}`
   ].join(' | ');
+}
+
+function logButtonPress(query) {
+  const action = CALLBACK_LABELS[query.data] || query.data || 'unknown';
+  logger.info(`Telegram button pressed: ${action}`);
 }
 
 async function withActionLock(ctx, actionName, action) {
@@ -309,6 +326,7 @@ function registerBotHandlers({ bot, authFlow, scheduler, rewardsRepository, sess
     }
 
     const now = Date.now();
+    logButtonPress(query);
     if (now - ctx.lastCallbackAt < CALLBACK_COOLDOWN_MS) {
       await bot.answerCallbackQuery(query.id, { text: 'Зачекай секунду...' }).catch(() => {});
       return;

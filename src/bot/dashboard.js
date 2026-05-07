@@ -231,25 +231,25 @@ class Dashboard {
     const status = this.busy ? this.state.status || 'Виконується дія' : this.state.status;
     const operation = this.busy ? this.state.currentOperation : 'Очікую команду';
     const collectState = this.scheduler && this.scheduler.isRunning() ? 'Виконується' : 'Не виконується';
-    const actions = this.formatList(this.state.recentActions, 'Поки немає дій');
-    const messages = this.formatList(this.state.recentMessages, 'Поки немає повідомлень');
+    const lastEvent = this.latestEventText() || status;
+    const lastError = this.latestErrorText();
+    const events = this.formatEvents();
 
     return truncate([
       'Asphalt Daily Rewards',
       '',
-      `Статус: ${status}`,
-      `Операція: ${operation}`,
+      `Стан: ${status}`,
       `Збір: ${collectState}`,
-      `Сесія: ${labels.sessionStatus}`,
-      `OTP: ${labels.otpStatus}`,
-      `Останній успішний збір: ${formatDateTime(persisted.lastSuccessfulCollectAt)}`,
+      `Сесія: ${labels.sessionStatus} | OTP: ${labels.otpStatus}`,
+      '',
+      `Останнє: ${lastEvent}`,
+      `Операція: ${operation}`,
       `Наступний збір: ${formatDateTime(persisted.nextRunAt)}`,
+      `Останній успішний: ${formatDateTime(persisted.lastSuccessfulCollectAt)}`,
+      `Помилка: ${lastError || 'немає'}`,
       '',
-      'Останні дії:',
-      actions,
-      '',
-      'Останні повідомлення:',
-      messages
+      'Події:',
+      events
     ].join('\n'), MAX_CAPTION_LENGTH);
   }
 
@@ -308,6 +308,41 @@ class Dashboard {
     return items.length
       ? items.map((item) => `- ${this.formatEntry(item)}`).join('\n')
       : `- ${emptyText}`;
+  }
+
+  formatEvents() {
+    const events = this.recentEvents();
+    return events.length
+      ? events.map((item) => `- ${this.formatEntry(item)}`).join('\n')
+      : '- Поки немає подій';
+  }
+
+  recentEvents() {
+    const seen = new Set();
+    return [...this.state.recentActions, ...this.state.recentMessages]
+      .filter((item) => this.entryText(item))
+      .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))
+      .filter((item) => {
+        const key = this.entryText(item);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, MAX_RECENT_ITEMS)
+      .reverse();
+  }
+
+  latestEventText() {
+    const events = this.recentEvents();
+    if (!events.length) return '';
+    return this.formatEntry(events[events.length - 1]);
+  }
+
+  latestErrorText() {
+    const errorPattern = /помилка|не вдалося|не спрацював|втрачена|неактивна|crash|failed|error/i;
+    const events = this.recentEvents().filter((item) => errorPattern.test(this.entryText(item)));
+    if (!events.length) return '';
+    return this.formatEntry(events[events.length - 1]);
   }
 
   entryText(item) {
