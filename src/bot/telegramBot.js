@@ -124,6 +124,14 @@ class SimpleTelegramBot extends EventEmitter {
     return this.requestForm('sendPhoto', form);
   }
 
+  async sendDocument(chatId, document, options = {}) {
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    form.append('document', await this.fileBlob(document), path.basename(document.path || String(document)));
+    this.appendFormOptions(form, options);
+    return this.requestForm('sendDocument', form);
+  }
+
   async sendMediaGroup(chatId, mediaItems) {
     const form = new FormData();
     form.append('chat_id', String(chatId));
@@ -387,6 +395,21 @@ async function sendPhotoToChat(bot, chatId, photoPath, caption, options = {}) {
   }
 }
 
+async function sendDocumentToChat(bot, chatId, documentPath, caption, options = {}) {
+  if (!chatId || !documentPath) return null;
+
+  try {
+    return await bot.sendDocument(chatId, documentPath, {
+      caption,
+      ...options
+    });
+  } catch (error) {
+    logger.warn('Не вдалося надіслати документ у Telegram');
+    logger.debug({ error, documentPath }, 'sendDocument failed');
+    return null;
+  }
+}
+
 async function sendMediaGroupToChat(bot, chatId, mediaItems) {
   if (!chatId || !mediaItems || mediaItems.length === 0) return null;
 
@@ -441,6 +464,7 @@ module.exports = {
   createTelegramBot,
   sendMessageToChat,
   sendMediaGroupToChat,
+  sendDocumentToChat,
   sendPhotoToChat,
   editMessage,
   editPhotoMedia,

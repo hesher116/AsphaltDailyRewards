@@ -176,6 +176,15 @@ async function bootstrap() {
         return;
       }
 
+      if (event.type === 'daily_audit' && dashboard) {
+        await sendMessageToChat(bot, config.telegram.chatId, event.audit.text);
+        await dashboard.setStatus('Daily audit sent', {
+          action: 'Daily audit',
+          message: event.audit.text
+        });
+        return;
+      }
+
       if (event.type !== 'collect_result') return;
 
       if (dashboard) {

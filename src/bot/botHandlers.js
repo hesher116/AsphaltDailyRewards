@@ -1,8 +1,12 @@
 const config = require('../config');
 const fs = require('fs');
+const fsPromises = require('fs/promises');
+const path = require('path');
 const logger = require('../utils/logger');
 const { formatDateTime } = require('../utils/time');
-const { sendMediaGroupToChat, sendMessageToChat } = require('./telegramBot');
+const { findAvailableRewards } = require('../automation/rewardParser');
+const selectors = require('../automation/selectors');
+const { sendDocumentToChat, sendMediaGroupToChat, sendMessageToChat } = require('./telegramBot');
 const { buildCollectSummary, collectStatusTitle } = require('../automation/collectResult');
 
 const CALLBACK_COOLDOWN_MS = 1200;
@@ -24,6 +28,30 @@ function isAdminChat(chatId) {
 
 async function deleteUserMessage(bot, msg) {
   await bot.deleteMessage(msg.chat.id, msg.message_id).catch(() => {});
+}
+
+async function listFilesRecursive(dir) {
+  const entries = await fsPromises.readdir(dir, { withFileTypes: true }).catch(() => []);
+  const files = [];
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await listFilesRecursive(fullPath));
+    } else {
+      const stat = await fsPromises.stat(fullPath).catch(() => null);
+      if (stat) files.push({ path: fullPath, mtimeMs: stat.mtimeMs, size: stat.size });
+    }
+  }
+  return files;
+}
+
+function tailLines(text, limit) {
+  return String(text || '').split(/\r?\n/).slice(-limit).join('\n');
+}
+
+function codeBlock(text) {
+  const value = String(text || '').trim() || 'empty';
+  return `\`\`\`\n${value.slice(-3500)}\n\`\`\``;
 }
 
 async function guardAdmin(bot, msgOrQuery) {
@@ -96,6 +124,31 @@ function formatDoctor(ctx) {
   ].join('\n');
 }
 
+async function latestDebugSnapshot() {
+  const files = await listFilesRecursive(config.storage.debugSnapshotsDir);
+  return files
+    .filter((file) => /\.(html?|txt)$/i.test(file.path))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0] || null;
+}
+
+async function readPm2Logs(lines = 30) {
+  const pm2Home = process.env.PM2_HOME || path.join(process.env.HOME || '.', '.pm2');
+  const outPath = path.join(pm2Home, 'logs', 'asphalt-daily-rewards-out-0.log');
+  const errPath = path.join(pm2Home, 'logs', 'asphalt-daily-rewards-error-0.log');
+  const [outLog, errLog] = await Promise.all([
+    fsPromises.readFile(outPath, 'utf8').catch(() => ''),
+    fsPromises.readFile(errPath, 'utf8').catch(() => '')
+  ]);
+
+  return [
+    `OUT ${outPath}`,
+    tailLines(outLog, lines),
+    '',
+    `ERROR ${errPath}`,
+    tailLines(errLog, lines)
+  ].join('\n').trim();
+}
+
 function logButtonPress(query) {
   const action = CALLBACK_LABELS[query.data] || query.data || 'unknown';
   logger.info(`Telegram button pressed: ${action}`);
@@ -138,6 +191,68 @@ async function showDoctor(ctx) {
   await ctx.dashboard.setStatus('Doctor оновлено', {
     action: 'Doctor',
     message: formatDoctor(ctx)
+  });
+}
+
+async function sendLatestSnapshot(ctx) {
+  const snapshot = await latestDebugSnapshot();
+  if (!snapshot) {
+    await ctx.dashboard.setStatus('Snapshot не знайдено', {
+      action: 'Snapshot',
+      message: `У ${config.storage.debugSnapshotsDir} ще немає debug snapshot`
+    });
+    return;
+  }
+
+  await sendDocumentToChat(ctx.bot, config.telegram.chatId, snapshot.path, `Latest debug snapshot\n${snapshot.path}`);
+  await ctx.dashboard.setStatus('Snapshot надіслано', {
+    action: 'Snapshot',
+    message: `${snapshot.path} (${Math.round(snapshot.size / 1024)} KB)`
+  });
+}
+
+async function showLogs(ctx, lines = 30) {
+  const logs = await readPm2Logs(lines);
+  await sendMessageToChat(ctx.bot, config.telegram.chatId, codeBlock(logs));
+  await ctx.dashboard.setStatus('Logs надіслано', {
+    action: 'Logs',
+    message: 'Останні PM2 logs надіслано окремим повідомленням'
+  });
+}
+
+async function verifyShop(ctx) {
+  await withActionLock(ctx, 'Verify shop', async () => {
+    try {
+      await ctx.authFlow.gotoShop();
+      const page = ctx.authFlow.getPage();
+      const loginVisible = await page.locator(selectors.loginButton).first().isVisible({ timeout: 5000 }).catch(() => false);
+      const rewards = loginVisible
+        ? []
+        : await findAvailableRewards(page, (message, level) => ctx.dashboard.addMessage(level === 'warn' ? `WARN: ${message}` : message));
+      if (loginVisible) ctx.sessionRepository.setSessionLost();
+      else ctx.sessionRepository.update({ authStatus: 'logged_in' });
+      await ctx.authFlow.closeIfIdle();
+
+      const rewardLinesText = rewards.length
+        ? rewards.map((reward, index) => `${index + 1}. ${reward.name}`).join('\n')
+        : 'Немає доступних Free Gift rewards';
+      const message = [
+        `Session: ${loginVisible ? 'login required' : 'active'}`,
+        `Available rewards: ${rewards.length}`,
+        rewardLinesText,
+        `Checked: ${formatDateTime(new Date())}`
+      ].join('\n');
+      await ctx.dashboard.setStatus('Shop перевірено', {
+        action: 'Verify shop',
+        message
+      });
+    } catch (error) {
+      await ctx.authFlow.closeIfIdle();
+      await ctx.dashboard.setStatus('Verify shop failed', {
+        action: 'Verify shop failed',
+        message: error.message
+      });
+    }
   });
 }
 
@@ -331,6 +446,22 @@ function registerBotHandlers({ bot, authFlow, scheduler, rewardsRepository, sess
   bot.onText(/^\/doctor$/, async (msg) => {
     if (!await guardAdmin(bot, msg)) return;
     await showDoctor(ctx);
+  });
+
+  bot.onText(/^\/snapshot$/, async (msg) => {
+    if (!await guardAdmin(bot, msg)) return;
+    await sendLatestSnapshot(ctx);
+  });
+
+  bot.onText(/^\/logs(?:\s+(\d+))?$/, async (msg, match) => {
+    if (!await guardAdmin(bot, msg)) return;
+    const lines = Math.min(100, Math.max(10, Number(match[1]) || 30));
+    await showLogs(ctx, lines);
+  });
+
+  bot.onText(/^\/verify_shop$/, async (msg) => {
+    if (!await guardAdmin(bot, msg)) return;
+    await verifyShop(ctx);
   });
 
   bot.onText(/^\/login$/, async (msg) => {

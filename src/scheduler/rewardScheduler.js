@@ -49,6 +49,7 @@ class RewardScheduler {
     this.notify = notify;
     this.timer = null;
     this.heartbeatTimer = null;
+    this.dailyAuditTimer = null;
     this.collectRunning = false;
     this.stopped = false;
   }
@@ -72,6 +73,7 @@ class RewardScheduler {
   start() {
     this.scheduleAt(this.resolveStartupNextRun(this.sessionRepository.getState()));
     this.startHeartbeat();
+    this.startDailyAudit();
   }
 
   stop() {
@@ -83,6 +85,10 @@ class RewardScheduler {
     if (this.heartbeatTimer) {
       clearTimeout(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+    if (this.dailyAuditTimer) {
+      clearTimeout(this.dailyAuditTimer);
+      this.dailyAuditTimer = null;
     }
   }
 
@@ -103,6 +109,40 @@ class RewardScheduler {
 
     if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
     this.heartbeatTimer = setTimeout(tick, intervalMs);
+  }
+
+  startDailyAudit() {
+    const intervalMs = Math.max(1, config.runtime.dailyAuditIntervalHours) * 60 * 60 * 1000;
+    const tick = async () => {
+      if (this.stopped) return;
+      const audit = this.buildAuditSnapshot();
+      logger.info(`Daily audit: ${audit.text.replace(/\n/g, ' | ')}`);
+      if (this.notify) {
+        await this.notify({ type: 'daily_audit', audit }).catch((error) => {
+          logger.debug({ error }, 'Daily audit notification failed');
+        });
+      }
+      this.dailyAuditTimer = setTimeout(tick, intervalMs);
+    };
+
+    if (this.dailyAuditTimer) clearTimeout(this.dailyAuditTimer);
+    this.dailyAuditTimer = setTimeout(tick, intervalMs);
+  }
+
+  buildAuditSnapshot() {
+    const state = this.sessionRepository.getState();
+    const lastRun = this.rewardsRepository.getLast();
+    const text = [
+      'Daily audit',
+      `Status: ${lastRun ? lastRun.status : 'no runs yet'}`,
+      `Last run: ${lastRun ? formatDateTimeForLog(lastRun.createdAt) : 'unknown'}`,
+      `Verified: ${lastRun && lastRun.verifiedAt ? formatDateTimeForLog(lastRun.verifiedAt) : 'unknown'}`,
+      `Progress: ${lastRun ? `${lastRun.collectedCount}/${lastRun.expectedCount}` : '0/0'}`,
+      `Next run: ${formatDateTimeForLog(state.nextRunAt)}`,
+      `Auth: ${state.authStatus}`,
+      `Collect running: ${this.collectRunning ? 'yes' : 'no'}`
+    ].join('\n');
+    return { text, state, lastRun };
   }
 
   resolveStartupNextRun(state) {

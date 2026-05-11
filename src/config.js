@@ -62,6 +62,7 @@ module.exports = {
     debug: boolFromEnv(process.env.DEBUG, false),
     restartNotificationTtlHours: intFromEnv(process.env.RESTART_NOTIFICATION_TTL_HOURS, 6),
     heartbeatIntervalHours: intFromEnv(process.env.HEARTBEAT_INTERVAL_HOURS, 6),
+    dailyAuditIntervalHours: intFromEnv(process.env.DAILY_AUDIT_INTERVAL_HOURS, 24),
     startupAutoCollectThresholdMs: (24 * 60 + 10) * 60 * 1000,
     navigationTimeoutMs: intFromEnv(process.env.NAVIGATION_TIMEOUT_MS, 60000),
     selectorTimeoutMs: intFromEnv(process.env.SELECTOR_TIMEOUT_MS, 15000),
