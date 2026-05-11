@@ -60,10 +60,12 @@ class RewardScheduler {
   createCollectJob(source) {
     const lastRun = this.rewardsRepository.getLast();
     const id = (lastRun ? lastRun.id : 0) + 1;
+    const startedAt = nowIso();
     return {
       id,
+      startedAt,
       source,
-      label: `Collect #${id}`
+      label: `Collect ${formatDateTimeForLog(startedAt)}`
     };
   }
 
@@ -154,12 +156,15 @@ class RewardScheduler {
     }, delayMs);
   }
 
-  scheduleNextAfterSuccess() {
-    const now = new Date();
-    const nextRunAt = this.computeNextFrom(now);
+  scheduleNextAfterSuccess(result = {}) {
+    const verifiedAt = new Date(result.verifiedAt || nowIso());
+    const safeVerifiedAt = Number.isNaN(verifiedAt.getTime()) ? new Date() : verifiedAt;
+    const offset = randomOffsetMs();
+    const nextRunAt = new Date(safeVerifiedAt.getTime() + config.scheduler.baseDelayMs + offset);
     this.sessionRepository.update({
       lastRunAt: nowIso(),
-      lastSuccessfulCollectAt: now.toISOString(),
+      lastSuccessfulCollectAt: safeVerifiedAt.toISOString(),
+      schedulerOffsetMs: offset,
       nextRunAt: nextRunAt.toISOString()
     });
     this.scheduleAt(nextRunAt);
@@ -231,6 +236,7 @@ class RewardScheduler {
         error: userError,
         technicalStatus: 'collector_error',
         jobId: job.id,
+        jobLabel: job.label,
         source
       };
     } finally {
@@ -247,8 +253,8 @@ class RewardScheduler {
     let nextRunAt;
 
     if (scheduleDecision.action === 'reschedule_after_success') {
-      nextRunAt = this.scheduleNextAfterSuccess();
-      await safeWriteLastCollect(new Date().toISOString());
+      nextRunAt = this.scheduleNextAfterSuccess(finalResult);
+      await safeWriteLastCollect(finalResult.verifiedAt || new Date().toISOString());
       logger.info(`${job.label}: ${scheduleDecision.message}`);
     } else if (scheduleDecision.action === 'preserve_manual_failure') {
       nextRunAt = this.preserveExistingSchedule();

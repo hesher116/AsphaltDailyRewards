@@ -1,12 +1,12 @@
-const { isCollectSuccess } = require('../automation/collectResult');
+const { isVerifiedCollect } = require('../automation/collectResult');
 
 function decideScheduleAction({ result, source }) {
-  if (isCollectSuccess(result.status)) {
+  if (isVerifiedCollect(result.status)) {
     return {
       action: 'reschedule_after_success',
       scheduleChanged: true,
       schedulePreserved: false,
-      message: 'Графік оновлено після успішного збору'
+      message: 'Графік оновлено після перевіреного збору'
     };
   }
 

@@ -4,16 +4,40 @@ const path = require('path');
 const config = require('../config');
 const logger = require('../utils/logger');
 
+function classifyTelegramPollingError(error, streak) {
+  const message = String(error && error.message ? error.message : error || '');
+  const response = error && error.response ? error.response : {};
+  const lower = message.toLowerCase();
+  let kind = 'temporary';
+
+  if (response.error_code === 409 || lower.includes('terminated by other getupdates')) {
+    kind = 'conflict';
+  } else if (response.error_code === 401 || lower.includes('unauthorized')) {
+    kind = 'auth';
+  } else if (lower.includes('fetch failed') || lower.includes('econnreset') || lower.includes('etimedout') || lower.includes('timeout')) {
+    kind = 'network';
+  } else if (response.error_code >= 500) {
+    kind = 'telegram_5xx';
+  }
+
+  const baseDelayMs = kind === 'conflict' ? 15000 : 3000;
+  const maxDelayMs = kind === 'auth' ? 60000 : 45000;
+  const delayMs = Math.min(maxDelayMs, baseDelayMs * (2 ** Math.min(streak - 1, 4)));
+
+  return {
+    kind,
+    delayMs,
+    description: response.description || message || 'unknown polling error'
+  };
+}
+
 function dashboardKeyboard(view = 'dashboard') {
   if (view === 'history' || view === 'recent_collects') {
     return {
       reply_markup: {
         inline_keyboard: [
           [{ text: 'Назад до dashboard', callback_data: 'dashboard' }],
-          [
-            { text: view === 'history' ? 'Оновити історію' : 'Оновити збори', callback_data: view },
-            { text: 'Статус', callback_data: 'status' }
-          ]
+          [{ text: view === 'history' ? 'Оновити історію' : 'Оновити збори', callback_data: view }]
         ]
       }
     };
@@ -28,11 +52,10 @@ function dashboardKeyboard(view = 'dashboard') {
         ],
         [
           { text: 'Зібрати подарунки', callback_data: 'collect' },
-          { text: 'Статус', callback_data: 'status' }
+          { text: 'Останні збори', callback_data: 'recent_collects' }
         ],
         [
-          { text: 'Історія', callback_data: 'history' },
-          { text: 'Останні збори', callback_data: 'recent_collects' }
+          { text: 'Історія', callback_data: 'history' }
         ]
       ]
     }
@@ -59,6 +82,7 @@ class SimpleTelegramBot extends EventEmitter {
     this.textHandlers = [];
     this.polling = false;
     this.offset = 0;
+    this.pollingErrorStreak = 0;
   }
 
   onText(regex, handler) {
@@ -93,6 +117,26 @@ class SimpleTelegramBot extends EventEmitter {
     form.append('photo', await this.fileBlob(photo), path.basename(photo.path || String(photo)));
     this.appendFormOptions(form, options);
     return this.requestForm('sendPhoto', form);
+  }
+
+  async sendMediaGroup(chatId, mediaItems) {
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    const media = [];
+
+    for (let index = 0; index < mediaItems.length; index += 1) {
+      const item = mediaItems[index];
+      const attachName = `media_${index}`;
+      media.push({
+        type: 'photo',
+        media: `attach://${attachName}`,
+        caption: item.caption || undefined
+      });
+      form.append(attachName, await this.fileBlob(item.path), path.basename(item.path));
+    }
+
+    form.append('media', JSON.stringify(media));
+    return this.requestForm('sendMediaGroup', form);
   }
 
   async editMessageText(text, options = {}) {
@@ -149,9 +193,12 @@ class SimpleTelegramBot extends EventEmitter {
           this.offset = update.update_id + 1;
           await this.dispatchUpdate(update);
         }
+        this.pollingErrorStreak = 0;
       } catch (error) {
+        this.pollingErrorStreak += 1;
+        error.pollingInfo = classifyTelegramPollingError(error, this.pollingErrorStreak);
         this.emit('polling_error', error);
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+        await new Promise((resolve) => setTimeout(resolve, error.pollingInfo.delayMs));
       }
     }
   }
@@ -225,8 +272,9 @@ async function createTelegramBot() {
   logger.info('Telegram-бот запущено');
 
   bot.on('polling_error', (error) => {
-    logger.warn('Telegram-бот тимчасово повернув помилку polling');
-    logger.debug({ error }, 'Telegram polling error');
+    const info = error.pollingInfo || classifyTelegramPollingError(error, 1);
+    logger.warn(`Telegram polling error (${info.kind}), retry in ${Math.round(info.delayMs / 1000)}s: ${info.description}`);
+    logger.debug({ error, pollingInfo: info }, 'Telegram polling error');
   });
 
   bot.on('webhook_error', (error) => {
@@ -296,6 +344,18 @@ async function sendPhotoToChat(bot, chatId, photoPath, caption, options = {}) {
   }
 }
 
+async function sendMediaGroupToChat(bot, chatId, mediaItems) {
+  if (!chatId || !mediaItems || mediaItems.length === 0) return null;
+
+  try {
+    return await bot.sendMediaGroup(chatId, mediaItems);
+  } catch (error) {
+    logger.warn('Не вдалося надіслати reward images у Telegram');
+    logger.debug({ error }, 'sendMediaGroup failed');
+    return null;
+  }
+}
+
 async function editPhotoMedia(bot, chatId, messageId, photoPath, caption, options = {}) {
   try {
     return await bot.editMessageMedia(
@@ -337,6 +397,7 @@ async function deleteMessageSafe(bot, chatId, messageId) {
 module.exports = {
   createTelegramBot,
   sendMessageToChat,
+  sendMediaGroupToChat,
   sendPhotoToChat,
   editMessage,
   editPhotoMedia,

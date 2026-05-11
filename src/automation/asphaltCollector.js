@@ -1,6 +1,6 @@
 const config = require('../config');
 const selectors = require('./selectors');
-const { parseAndClaimNextReward } = require('./rewardParser');
+const { claimDiscoveredReward, findAvailableRewards } = require('./rewardParser');
 const logger = require('../utils/logger');
 const { nowIso } = require('../utils/time');
 const { savePageSnapshot } = require('../utils/debugSnapshot');
@@ -69,25 +69,67 @@ class AsphaltCollector {
     }
     await this.selectorHealthCheck();
 
+    let expectedCount = 0;
     const rewards = [];
     const errors = [];
 
-    for (let index = 1; index <= 2; index += 1) {
+    const initialRewards = await findAvailableRewards(page, (message, level) => this.report(message, level));
+    expectedCount = initialRewards.length;
+    if (expectedCount === 0) {
+      this.report('Подарунки зараз недоступні', 'warn');
+      return {
+        status: 'unavailable',
+        rewards: [],
+        imagePaths: [],
+        description: 'Daily rewards are not available yet',
+        technicalStatus: 'available 0',
+        collectedCount: 0,
+        expectedCount: 0,
+        jobId: job.id || null,
+        jobLabel: job.label || null,
+        source: job.source || null
+      };
+    }
+
+    const maxRewards = Math.max(1, config.runtime.maxRewardsPerCollect);
+    if (expectedCount > maxRewards) {
+      this.report(`Знайдено ${expectedCount} rewards, safety limit ${maxRewards}. Зберу тільки до ліміту.`, 'warn');
+    }
+
+    const targetCount = Math.min(expectedCount, maxRewards);
+    for (let index = 1; index <= targetCount; index += 1) {
       try {
         if (page.url().includes('purchase-success')) {
           await this.authFlow.gotoShop();
           this.report(`Повернувся в магазин: ${page.url()}`);
         }
 
-        this.report(index === 1 ? 'Забираю перший подарунок' : 'Забираю другий подарунок');
-        const reward = await parseAndClaimNextReward(page, index, (message, level) => this.report(message, level));
-        rewards.push(reward);
-        this.report(index === 1 ? 'Перший подарунок зібрано' : 'Другий подарунок зібрано', 'success');
+        const availableBefore = await findAvailableRewards(page, (message, level) => this.report(message, level));
+        if (availableBefore.length === 0) break;
+
+        const rewardToClaim = { ...availableBefore[0], index };
+        this.report(`Забираю подарунок ${index}/${expectedCount}: ${rewardToClaim.name}`);
+        const reward = await claimDiscoveredReward(page, rewardToClaim, (message, level) => this.report(message, level));
+
+        await this.authFlow.gotoShop();
+        this.report(`Перевіряю магазин після Claim: ${page.url()}`);
+        const availableAfter = await findAvailableRewards(page, (message, level) => this.report(message, level));
+        if (availableAfter.length >= availableBefore.length) {
+          throw new Error(`Post-claim verification failed: available rewards did not decrease (${availableBefore.length} -> ${availableAfter.length})`);
+        }
+
+        rewards.push({
+          ...reward,
+          verifiedAt: nowIso(),
+          availableBefore: availableBefore.length,
+          availableAfter: availableAfter.length
+        });
+        this.report(`Подарунок ${index}/${expectedCount} підтверджено після Claim`, 'success');
         logger.debug({ reward: reward.name }, 'Reward collected');
       } catch (error) {
-        errors.push(`Reward #${index}: ${error.message}`);
+        errors.push(`Reward ${index}: ${error.message}`);
         logger.debug({ error: error.message, index }, 'No more available rewards or claim failed');
-        this.report(`Подарунок #${index} не зібрано: ${error.message.split('\n')[0]}`, 'warn');
+        this.report(`Подарунок ${index} не підтверджено: ${error.message.split('\n')[0]}`, 'warn');
         const snapshotPath = await savePageSnapshot(page, `reward-${index}-failed`);
         if (snapshotPath) {
           logger.warn(`Збережено debug snapshot подарунка: ${snapshotPath}`);
@@ -99,17 +141,37 @@ class AsphaltCollector {
     const imagePaths = rewards.map((reward) => reward.imagePath).filter(Boolean);
     const imageWarnings = rewards.map((reward) => reward.imageWarning).filter(Boolean);
 
-    if (rewards.length === 2) {
+    if (rewards.length === expectedCount && expectedCount === 1) {
+      this.report('Зібрано 1 reward. Потрібна ручна перевірка в Telegram.', 'warn');
+      return {
+        status: 'needs_review',
+        rewards,
+        imagePaths,
+        description: 'Collected 1 verified reward; manual check requested',
+        error: 'Only one reward was available; please verify manually',
+        technicalStatus: imageWarnings.length ? `verified 1/1; image warnings: ${imageWarnings.join('; ')}` : 'verified 1/1',
+        collectedCount: rewards.length,
+        expectedCount,
+        verifiedAt: rewards[rewards.length - 1].verifiedAt,
+        jobId: job.id || null,
+        jobLabel: job.label || null,
+        source: job.source || null
+      };
+    }
+
+    if (rewards.length === expectedCount && expectedCount > 1) {
       this.report('Збір завершено успішно', 'success');
       return {
         status: 'success',
         rewards,
         imagePaths,
-        description: 'Collected 2 daily rewards',
-        technicalStatus: imageWarnings.length ? `collected 2/2; image warnings: ${imageWarnings.join('; ')}` : 'collected 2/2',
+        description: `Collected ${rewards.length} verified daily rewards`,
+        technicalStatus: imageWarnings.length ? `verified ${rewards.length}/${expectedCount}; image warnings: ${imageWarnings.join('; ')}` : `verified ${rewards.length}/${expectedCount}`,
         collectedCount: rewards.length,
-        expectedCount: 2,
+        expectedCount,
+        verifiedAt: rewards[rewards.length - 1].verifiedAt,
         jobId: job.id || null,
+        jobLabel: job.label || null,
         source: job.source || null
       };
     }
@@ -120,12 +182,14 @@ class AsphaltCollector {
         status: 'partial',
         rewards,
         imagePaths,
-        description: `Collected ${rewards.length}/2 daily rewards`,
+        description: `Collected ${rewards.length}/${expectedCount} verified daily rewards`,
         error: errors.join('; ') || null,
-        technicalStatus: `collected ${rewards.length}/2`,
+        technicalStatus: `verified ${rewards.length}/${expectedCount}`,
         collectedCount: rewards.length,
-        expectedCount: 2,
+        expectedCount,
+        verifiedAt: rewards[rewards.length - 1].verifiedAt,
         jobId: job.id || null,
+        jobLabel: job.label || null,
         source: job.source || null
       };
     }
@@ -137,10 +201,11 @@ class AsphaltCollector {
       imagePaths: [],
       description: 'Daily rewards are not available yet',
       error: errors.join('; ') || null,
-      technicalStatus: 'collected 0/2',
+      technicalStatus: `verified 0/${expectedCount}`,
       collectedCount: 0,
-      expectedCount: 2,
+      expectedCount,
       jobId: job.id || null,
+      jobLabel: job.label || null,
       source: job.source || null
     };
   }

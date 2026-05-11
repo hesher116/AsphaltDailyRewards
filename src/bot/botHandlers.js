@@ -1,7 +1,8 @@
 const config = require('../config');
+const fs = require('fs');
 const logger = require('../utils/logger');
 const { formatDateTime } = require('../utils/time');
-const { sendMessageToChat } = require('./telegramBot');
+const { sendMediaGroupToChat, sendMessageToChat } = require('./telegramBot');
 const { buildCollectSummary, collectStatusTitle } = require('../automation/collectResult');
 
 const CALLBACK_COOLDOWN_MS = 1200;
@@ -110,7 +111,20 @@ async function showHistory(ctx) {
 }
 
 async function showRecentCollects(ctx) {
-  await ctx.dashboard.showRecentCollects(ctx.rewardsRepository.getRecentSuccessful(3));
+  const runs = ctx.rewardsRepository.getRecentSuccessful(3);
+  await ctx.dashboard.showRecentCollects(runs);
+  if (!runs[0] || ctx.lastRecentImagesRunId === runs[0].id) return;
+  const latestImages = (runs[0] && runs[0].imagePaths ? runs[0].imagePaths : [])
+    .filter((imagePath) => imagePath && fs.existsSync(imagePath))
+    .slice(0, 10)
+    .map((imagePath, index) => ({
+      path: imagePath,
+      caption: index === 0 ? `Reward images ${formatDateTime(runs[0].createdAt)}` : undefined
+    }));
+  if (latestImages.length > 1) {
+    await sendMediaGroupToChat(ctx.bot, config.telegram.chatId, latestImages);
+    ctx.lastRecentImagesRunId = runs[0].id;
+  }
 }
 
 async function startLogin(ctx) {
@@ -219,7 +233,8 @@ function registerBotHandlers({ bot, authFlow, scheduler, rewardsRepository, sess
     sessionRepository,
     dashboard,
     actionRunning: false,
-    lastCallbackAt: 0
+    lastCallbackAt: 0,
+    lastRecentImagesRunId: null
   };
 
   bot.on('message', async (msg) => {

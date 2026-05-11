@@ -6,7 +6,7 @@ const RewardsRepository = require('./storage/rewardsRepository');
 const SessionRepository = require('./storage/sessionRepository');
 const AuthFlow = require('./automation/authFlow');
 const AsphaltCollector = require('./automation/asphaltCollector');
-const { buildCollectSummary, collectStatusTitle } = require('./automation/collectResult');
+const { buildCollectSummary, collectStatusTitle, isVerifiedCollect } = require('./automation/collectResult');
 const RewardScheduler = require('./scheduler/rewardScheduler');
 const StatusReporter = require('./status/statusReporter');
 const Dashboard = require('./bot/dashboard');
@@ -103,7 +103,7 @@ async function runStartupAutoCollectIfNeeded({ scheduler, sessionRepository, das
   });
 
   const result = await scheduler.runStartupCollect();
-  if (result.status === 'success' || result.status === 'partial') {
+  if (isVerifiedCollect(result.status)) {
     await dashboard.setStatus('Startup збір завершено', {
       action: 'Startup auto-collect завершено',
       message: `Наступний збір: ${formatDateTime(result.nextRunAt)}`

@@ -258,7 +258,7 @@ class Dashboard {
     const rows = this.state.historyRuns.length
       ? this.state.historyRuns.map((run) => {
           const rewards = (run.rewards || []).map((reward) => reward.name).join(', ') || 'без нагород';
-          return `#${run.id} ${formatDateTime(run.createdAt)} - ${run.status}: ${rewards}`;
+          return `${formatDateTime(run.createdAt)} - ${run.status}: ${rewards}`;
         }).join('\n')
       : 'Історія поки порожня.';
 
@@ -278,16 +278,21 @@ class Dashboard {
 
   buildRecentCollectsText() {
     const rows = this.state.recentCollects.length
-      ? this.state.recentCollects.map((run, index) => {
+      ? this.state.recentCollects.map((run) => {
           const rewards = (run.rewards || []).length
             ? (run.rewards || []).map((reward) => `- ${reward.name}`).join('\n')
             : '- Нагороди не визначено';
+          const images = (run.imagePaths || []).length
+            ? (run.imagePaths || []).map((imagePath, imageIndex) => `- image ${imageIndex + 1}: ${imagePath}`).join('\n')
+            : '- немає збережених зображень';
           return [
-            `Збір #${index + 1}`,
+            `Збір ${formatDateTime(run.createdAt)}`,
             `Дата: ${formatDateTime(run.createdAt)}`,
             `Статус: ${run.status}`,
             'Нагороди:',
-            rewards
+            rewards,
+            'Зображення:',
+            images
           ].join('\n');
         }).join('\n\n')
       : 'Успішних зборів поки немає.';

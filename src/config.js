@@ -67,7 +67,8 @@ module.exports = {
     selectorTimeoutMs: intFromEnv(process.env.SELECTOR_TIMEOUT_MS, 15000),
     claimTimeoutMs: intFromEnv(process.env.CLAIM_TIMEOUT_MS, 8000),
     rewardRetryCount: intFromEnv(process.env.REWARD_RETRY_COUNT, 2),
-    rewardRetryDelayMs: intFromEnv(process.env.REWARD_RETRY_DELAY_MS, 120000)
+    rewardRetryDelayMs: intFromEnv(process.env.REWARD_RETRY_DELAY_MS, 120000),
+    maxRewardsPerCollect: intFromEnv(process.env.MAX_REWARDS_PER_COLLECT, 5)
   },
   scheduler: {
     baseDelayMs: 24 * 60 * 60 * 1000,

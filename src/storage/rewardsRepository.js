@@ -57,7 +57,7 @@ class RewardsRepository {
 
   getRecentSuccessful(limit = 3) {
     return this.db
-      .prepare("SELECT * FROM reward_runs WHERE status IN ('success', 'partial') ORDER BY id DESC LIMIT ?")
+      .prepare("SELECT * FROM reward_runs WHERE status IN ('success', 'needs_review', 'partial') ORDER BY id DESC LIMIT ?")
       .all(limit)
       .map((row) => this.mapRow(row));
   }
