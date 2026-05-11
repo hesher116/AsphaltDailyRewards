@@ -258,7 +258,8 @@ class Dashboard {
     const rows = this.state.historyRuns.length
       ? this.state.historyRuns.map((run) => {
           const rewards = (run.rewards || []).map((reward) => reward.name).join(', ') || 'без нагород';
-          return `${formatDateTime(run.createdAt)} - ${run.status}: ${rewards}`;
+          const progress = run.expectedCount ? ` ${run.collectedCount}/${run.expectedCount}` : '';
+          return `${formatDateTime(run.createdAt)} - ${run.status}${progress}: ${rewards}`;
         }).join('\n')
       : 'Історія поки порожня.';
 
@@ -289,6 +290,8 @@ class Dashboard {
             `Збір ${formatDateTime(run.createdAt)}`,
             `Дата: ${formatDateTime(run.createdAt)}`,
             `Статус: ${run.status}`,
+            `Підтверджено: ${formatDateTime(run.verifiedAt)}`,
+            `Прогрес: ${run.collectedCount}/${run.expectedCount}`,
             'Нагороди:',
             rewards,
             'Зображення:',

@@ -68,7 +68,8 @@ module.exports = {
     claimTimeoutMs: intFromEnv(process.env.CLAIM_TIMEOUT_MS, 8000),
     rewardRetryCount: intFromEnv(process.env.REWARD_RETRY_COUNT, 2),
     rewardRetryDelayMs: intFromEnv(process.env.REWARD_RETRY_DELAY_MS, 120000),
-    maxRewardsPerCollect: intFromEnv(process.env.MAX_REWARDS_PER_COLLECT, 5)
+    maxRewardsPerCollect: intFromEnv(process.env.MAX_REWARDS_PER_COLLECT, 5),
+    telegramPollingAlertAfterMs: intFromEnv(process.env.TELEGRAM_POLLING_ALERT_AFTER_MS, 5 * 60 * 1000)
   },
   scheduler: {
     baseDelayMs: 24 * 60 * 60 * 1000,

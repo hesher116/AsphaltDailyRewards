@@ -128,6 +128,30 @@ async function bootstrap() {
   const authFlow = new AuthFlow(sessionRepository, statusReporter);
   const collector = new AsphaltCollector(authFlow, sessionRepository, statusReporter);
   const bot = await createTelegramBot();
+  bot.on('polling_degraded', async (info) => {
+    await sendMessageToChat(
+      bot,
+      config.telegram.chatId,
+      [
+        'Telegram polling degraded',
+        `Type: ${info.kind}`,
+        `Streak: ${info.streak}`,
+        `Retry: ${Math.round(info.delayMs / 1000)}s`,
+        `Since: ${formatDateTime(info.at)}`,
+        `Reason: ${info.description}`
+      ].join('\n')
+    );
+  });
+  bot.on('polling_recovered', async (info) => {
+    await sendMessageToChat(
+      bot,
+      config.telegram.chatId,
+      [
+        'Telegram polling recovered',
+        `Time: ${formatDateTime(info.at)}`
+      ].join('\n')
+    );
+  });
   let restartNotificationTimer = await notifyPm2RestartIfNeeded(bot);
 
   let dashboard;

@@ -83,6 +83,11 @@ class SimpleTelegramBot extends EventEmitter {
     this.polling = false;
     this.offset = 0;
     this.pollingErrorStreak = 0;
+    this.firstPollingErrorAt = null;
+    this.lastPollingErrorAt = null;
+    this.lastPollingError = null;
+    this.lastPollingSuccessAt = null;
+    this.pollingAlertActive = false;
   }
 
   onText(regex, handler) {
@@ -193,14 +198,52 @@ class SimpleTelegramBot extends EventEmitter {
           this.offset = update.update_id + 1;
           await this.dispatchUpdate(update);
         }
+        this.lastPollingSuccessAt = new Date().toISOString();
         this.pollingErrorStreak = 0;
+        this.firstPollingErrorAt = null;
+        this.lastPollingError = null;
+        this.lastPollingErrorAt = null;
+        if (this.pollingAlertActive) {
+          this.pollingAlertActive = false;
+          this.emit('polling_recovered', { at: this.lastPollingSuccessAt });
+        }
       } catch (error) {
+        const now = new Date();
         this.pollingErrorStreak += 1;
+        this.firstPollingErrorAt = this.firstPollingErrorAt || now.toISOString();
+        this.lastPollingErrorAt = now.toISOString();
         error.pollingInfo = classifyTelegramPollingError(error, this.pollingErrorStreak);
+        this.lastPollingError = {
+          at: this.lastPollingErrorAt,
+          streak: this.pollingErrorStreak,
+          ...error.pollingInfo
+        };
         this.emit('polling_error', error);
+        if (!this.pollingAlertActive && this.firstPollingErrorAt) {
+          const degradedForMs = now.getTime() - new Date(this.firstPollingErrorAt).getTime();
+          if (degradedForMs >= config.runtime.telegramPollingAlertAfterMs) {
+            this.pollingAlertActive = true;
+            this.emit('polling_degraded', {
+              ...this.lastPollingError,
+              degradedForMs
+            });
+          }
+        }
         await new Promise((resolve) => setTimeout(resolve, error.pollingInfo.delayMs));
       }
     }
+  }
+
+  getPollingHealth() {
+    return {
+      polling: this.polling,
+      errorStreak: this.pollingErrorStreak,
+      firstErrorAt: this.firstPollingErrorAt,
+      lastErrorAt: this.lastPollingErrorAt,
+      lastSuccessAt: this.lastPollingSuccessAt,
+      alertActive: this.pollingAlertActive,
+      lastError: this.lastPollingError
+    };
   }
 
   async dispatchUpdate(update) {

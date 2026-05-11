@@ -143,13 +143,22 @@ class AsphaltCollector {
 
     if (rewards.length === expectedCount && expectedCount === 1) {
       this.report('Зібрано 1 reward. Потрібна ручна перевірка в Telegram.', 'warn');
+      const snapshotPath = await savePageSnapshot(page, 'needs-review-one-reward');
+      if (snapshotPath) {
+        logger.warn(`Збережено needs_review snapshot: ${snapshotPath}`);
+      }
       return {
         status: 'needs_review',
         rewards,
         imagePaths,
         description: 'Collected 1 verified reward; manual check requested',
-        error: 'Only one reward was available; please verify manually',
-        technicalStatus: imageWarnings.length ? `verified 1/1; image warnings: ${imageWarnings.join('; ')}` : 'verified 1/1',
+        error: snapshotPath
+          ? `Only one reward was available; please verify manually. Snapshot: ${snapshotPath}`
+          : 'Only one reward was available; please verify manually',
+        technicalStatus: [
+          imageWarnings.length ? `verified 1/1; image warnings: ${imageWarnings.join('; ')}` : 'verified 1/1',
+          snapshotPath ? `needs_review_snapshot=${snapshotPath}` : ''
+        ].filter(Boolean).join('; '),
         collectedCount: rewards.length,
         expectedCount,
         verifiedAt: rewards[rewards.length - 1].verifiedAt,

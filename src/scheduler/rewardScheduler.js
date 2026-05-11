@@ -285,7 +285,23 @@ class RewardScheduler {
       imagePaths: finalResult.imagePaths,
       description: finalResult.description,
       error: finalResult.error,
-      technicalStatus: finalResult.technicalStatus
+      technicalStatus: finalResult.technicalStatus,
+      verifiedAt: finalResult.verifiedAt,
+      collectedCount: finalResult.collectedCount,
+      expectedCount: finalResult.expectedCount,
+      verification: {
+        source,
+        jobLabel: job.label,
+        scheduleAction: scheduleDecision.action,
+        scheduleChanged: scheduleDecision.scheduleChanged,
+        schedulePreserved: scheduleDecision.schedulePreserved,
+        transitions: finalResult.rewards.map((reward) => ({
+          name: reward.name,
+          availableBefore: reward.availableBefore,
+          availableAfter: reward.availableAfter,
+          verifiedAt: reward.verifiedAt
+        }))
+      }
     });
 
     const resultWithSchedule = {

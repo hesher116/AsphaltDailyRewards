@@ -13,7 +13,18 @@ class RewardsRepository {
     this.db = db;
   }
 
-  addRun({ status, rewards = [], imagePaths = [], description = '', error = null, technicalStatus = '' }) {
+  addRun({
+    status,
+    rewards = [],
+    imagePaths = [],
+    description = '',
+    error = null,
+    technicalStatus = '',
+    verifiedAt = null,
+    collectedCount = rewards.length,
+    expectedCount = rewards.length,
+    verification = {}
+  }) {
     const info = this.db.prepare(`
       INSERT INTO reward_runs (
         created_at,
@@ -22,9 +33,13 @@ class RewardsRepository {
         image_paths_json,
         description,
         error,
-        technical_status
+        technical_status,
+        verified_at,
+        collected_count,
+        expected_count,
+        verification_json
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       nowIso(),
       status,
@@ -32,7 +47,11 @@ class RewardsRepository {
       JSON.stringify(imagePaths),
       description,
       error,
-      technicalStatus
+      technicalStatus,
+      verifiedAt,
+      Number(collectedCount) || 0,
+      Number(expectedCount) || 0,
+      JSON.stringify(verification || {})
     );
 
     return this.getById(info.lastInsertRowid);
@@ -63,15 +82,26 @@ class RewardsRepository {
   }
 
   mapRow(row) {
+    const rewards = parseJson(row.rewards_json, []);
+    const storedCollectedCount = Number(row.collected_count) || 0;
+    const storedExpectedCount = Number(row.expected_count) || 0;
+    const inferredCount = rewards.length;
+    const collectedCount = storedCollectedCount || inferredCount;
+    const expectedCount = storedExpectedCount || (inferredCount && row.status !== 'unavailable' ? inferredCount : 0);
+
     return {
       id: row.id,
       createdAt: row.created_at,
       status: row.status,
-      rewards: parseJson(row.rewards_json, []),
+      rewards,
       imagePaths: parseJson(row.image_paths_json, []),
       description: row.description,
       error: row.error,
-      technicalStatus: row.technical_status
+      technicalStatus: row.technical_status,
+      verifiedAt: row.verified_at,
+      collectedCount,
+      expectedCount,
+      verification: parseJson(row.verification_json, {})
     };
   }
 }

@@ -68,6 +68,34 @@ function formatStatus(sessionRepository, scheduler) {
   ].join(' | ');
 }
 
+function formatDoctor(ctx) {
+  const state = ctx.sessionRepository.getState();
+  const lastRun = ctx.rewardsRepository.getLast();
+  const polling = typeof ctx.bot.getPollingHealth === 'function'
+    ? ctx.bot.getPollingHealth()
+    : {};
+  const memory = process.memoryUsage();
+  const lastError = polling.lastError
+    ? `${polling.lastError.kind}: ${polling.lastError.description}`
+    : 'немає';
+
+  return [
+    'Doctor',
+    `PM2: ${process.env.PM2_HOME ? 'так' : 'невідомо'}`,
+    `Uptime: ${Math.round(process.uptime() / 60)} хв`,
+    `Memory RSS: ${Math.round(memory.rss / 1024 / 1024)} MB`,
+    `Auth: ${state.authStatus}`,
+    `Browser: ${state.activeBrowserSession ? 'active' : 'closed'}`,
+    `Collect running: ${ctx.scheduler.isRunning() ? 'yes' : 'no'}`,
+    `Last run: ${lastRun ? `${formatDateTime(lastRun.createdAt)} ${lastRun.status} ${lastRun.collectedCount}/${lastRun.expectedCount}` : 'немає'}`,
+    `Verified at: ${formatDateTime(lastRun && lastRun.verifiedAt)}`,
+    `Next run: ${formatDateTime(state.nextRunAt)}`,
+    `Polling: ${polling.polling ? 'on' : 'off'}, errors=${polling.errorStreak || 0}`,
+    `Polling last success: ${formatDateTime(polling.lastSuccessAt)}`,
+    `Polling last error: ${lastError}`
+  ].join('\n');
+}
+
 function logButtonPress(query) {
   const action = CALLBACK_LABELS[query.data] || query.data || 'unknown';
   logger.info(`Telegram button pressed: ${action}`);
@@ -103,6 +131,13 @@ async function showStatus(ctx) {
   await ctx.dashboard.setStatus('Статус оновлено', {
     action: 'Оновлено статус',
     message: formatStatus(ctx.sessionRepository, ctx.scheduler)
+  });
+}
+
+async function showDoctor(ctx) {
+  await ctx.dashboard.setStatus('Doctor оновлено', {
+    action: 'Doctor',
+    message: formatDoctor(ctx)
   });
 }
 
@@ -291,6 +326,11 @@ function registerBotHandlers({ bot, authFlow, scheduler, rewardsRepository, sess
   bot.onText(/^\/status$/, async (msg) => {
     if (!await guardAdmin(bot, msg)) return;
     await showStatus(ctx);
+  });
+
+  bot.onText(/^\/doctor$/, async (msg) => {
+    if (!await guardAdmin(bot, msg)) return;
+    await showDoctor(ctx);
   });
 
   bot.onText(/^\/login$/, async (msg) => {
