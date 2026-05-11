@@ -1,18 +1,24 @@
 const config = require('../config');
-const fs = require('fs');
 const fsPromises = require('fs/promises');
 const path = require('path');
 const logger = require('../utils/logger');
 const { formatDateTime } = require('../utils/time');
 const { findAvailableRewards } = require('../automation/rewardParser');
 const selectors = require('../automation/selectors');
-const { sendDocumentToChat, sendMediaGroupToChat, sendMessageToChat } = require('./telegramBot');
+const { sendDocumentToChat, sendMessageToChat } = require('./telegramBot');
 const { buildCollectSummary, collectStatusTitle } = require('../automation/collectResult');
 
 const CALLBACK_COOLDOWN_MS = 1200;
 
 const CALLBACK_LABELS = {
   dashboard: 'dashboard',
+  commands: 'commands',
+  cmd_doctor: 'cmd_doctor',
+  cmd_verify_shop: 'cmd_verify_shop',
+  cmd_logs: 'cmd_logs',
+  cmd_snapshot: 'cmd_snapshot',
+  cmd_next: 'cmd_next',
+  cmd_images: 'cmd_images',
   login: 'login',
   check_session: 'check_session',
   collect: 'collect',
@@ -194,6 +200,20 @@ async function showDoctor(ctx) {
   });
 }
 
+async function showNextRun(ctx) {
+  const state = ctx.sessionRepository.getState();
+  const lastRun = ctx.rewardsRepository.getLast();
+  const message = [
+    `Наступний збір: ${formatDateTime(state.nextRunAt)}`,
+    `Останній verified: ${formatDateTime(state.lastSuccessfulCollectAt)}`,
+    `Останній run: ${lastRun ? `${formatDateTime(lastRun.createdAt)} ${lastRun.status} ${lastRun.collectedCount}/${lastRun.expectedCount}` : 'немає'}`
+  ].join('\n');
+  await ctx.dashboard.setStatus('Next run', {
+    action: 'Next run',
+    message
+  });
+}
+
 async function sendLatestSnapshot(ctx) {
   const snapshot = await latestDebugSnapshot();
   if (!snapshot) {
@@ -263,18 +283,6 @@ async function showHistory(ctx) {
 async function showRecentCollects(ctx) {
   const runs = ctx.rewardsRepository.getRecentSuccessful(3);
   await ctx.dashboard.showRecentCollects(runs);
-  if (!runs[0] || ctx.lastRecentImagesRunId === runs[0].id) return;
-  const latestImages = (runs[0] && runs[0].imagePaths ? runs[0].imagePaths : [])
-    .filter((imagePath) => imagePath && fs.existsSync(imagePath))
-    .slice(0, 10)
-    .map((imagePath, index) => ({
-      path: imagePath,
-      caption: index === 0 ? `Reward images ${formatDateTime(runs[0].createdAt)}` : undefined
-    }));
-  if (latestImages.length > 1) {
-    await sendMediaGroupToChat(ctx.bot, config.telegram.chatId, latestImages);
-    ctx.lastRecentImagesRunId = runs[0].id;
-  }
 }
 
 async function startLogin(ctx) {
@@ -383,8 +391,7 @@ function registerBotHandlers({ bot, authFlow, scheduler, rewardsRepository, sess
     sessionRepository,
     dashboard,
     actionRunning: false,
-    lastCallbackAt: 0,
-    lastRecentImagesRunId: null
+    lastCallbackAt: 0
   };
 
   bot.on('message', async (msg) => {
@@ -438,6 +445,11 @@ function registerBotHandlers({ bot, authFlow, scheduler, rewardsRepository, sess
     await showRecentCollects(ctx);
   });
 
+  bot.onText(/^\/images$/, async (msg) => {
+    if (!await guardAdmin(bot, msg)) return;
+    await showRecentCollects(ctx);
+  });
+
   bot.onText(/^\/status$/, async (msg) => {
     if (!await guardAdmin(bot, msg)) return;
     await showStatus(ctx);
@@ -446,6 +458,11 @@ function registerBotHandlers({ bot, authFlow, scheduler, rewardsRepository, sess
   bot.onText(/^\/doctor$/, async (msg) => {
     if (!await guardAdmin(bot, msg)) return;
     await showDoctor(ctx);
+  });
+
+  bot.onText(/^\/commands$/, async (msg) => {
+    if (!await guardAdmin(bot, msg)) return;
+    await dashboard.showCommands();
   });
 
   bot.onText(/^\/snapshot$/, async (msg) => {
@@ -462,6 +479,11 @@ function registerBotHandlers({ bot, authFlow, scheduler, rewardsRepository, sess
   bot.onText(/^\/verify_shop$/, async (msg) => {
     if (!await guardAdmin(bot, msg)) return;
     await verifyShop(ctx);
+  });
+
+  bot.onText(/^\/next$/, async (msg) => {
+    if (!await guardAdmin(bot, msg)) return;
+    await showNextRun(ctx);
   });
 
   bot.onText(/^\/login$/, async (msg) => {
@@ -522,6 +544,13 @@ function registerBotHandlers({ bot, authFlow, scheduler, rewardsRepository, sess
     await bot.answerCallbackQuery(query.id).catch(() => {});
 
     if (query.data === 'dashboard') await dashboard.showDashboard('Повернувся до dashboard');
+    else if (query.data === 'commands') await dashboard.showCommands();
+    else if (query.data === 'cmd_doctor') await showDoctor(ctx);
+    else if (query.data === 'cmd_verify_shop') await verifyShop(ctx);
+    else if (query.data === 'cmd_logs') await showLogs(ctx, 50);
+    else if (query.data === 'cmd_snapshot') await sendLatestSnapshot(ctx);
+    else if (query.data === 'cmd_next') await showNextRun(ctx);
+    else if (query.data === 'cmd_images') await showRecentCollects(ctx);
     else if (query.data === 'login') await startLogin(ctx);
     else if (query.data === 'check_session') await checkSession(ctx);
     else if (query.data === 'collect') await collectNow(ctx);

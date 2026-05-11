@@ -1,6 +1,7 @@
 const fs = require('fs');
 const config = require('../config');
 const { formatDateTime } = require('../utils/time');
+const { createImageCollage } = require('../utils/imageCollage');
 const {
   dashboardHeaderPath,
   dashboardKeyboard,
@@ -62,6 +63,13 @@ class Dashboard {
     this.boundHandler = (event) => {
       this.setStatus(event.message, { message: event.message, action: event.message }).catch(() => {});
     };
+  }
+
+  async showCommands() {
+    this.state.currentView = 'commands';
+    this.addAction('Відкрито команди');
+    this.addMessage('Показую доступні команди');
+    await this.render();
   }
 
   start() {
@@ -182,7 +190,7 @@ class Dashboard {
   async renderNow() {
     const text = this.buildText();
     const keyboard = dashboardKeyboard(this.state.currentView);
-    const photoPath = this.getCurrentPhotoPath();
+    const photoPath = await this.getCurrentPhotoPath();
 
     if (this.messageId) {
       const edited = photoPath
@@ -208,12 +216,11 @@ class Dashboard {
     }
   }
 
-  getCurrentPhotoPath() {
+  async getCurrentPhotoPath() {
     if (this.state.currentView === 'recent_collects') {
-      for (const run of this.state.recentCollects || []) {
-        for (const imagePath of run.imagePaths || []) {
-          if (imagePath && fs.existsSync(imagePath)) return imagePath;
-        }
+      const latestRun = (this.state.recentCollects || []).find((run) => (run.imagePaths || []).some((imagePath) => imagePath && fs.existsSync(imagePath)));
+      if (latestRun) {
+        return createImageCollage(latestRun.imagePaths || []);
       }
     }
     return fs.existsSync(dashboardHeaderPath()) ? dashboardHeaderPath() : null;
@@ -222,6 +229,7 @@ class Dashboard {
   buildText() {
     if (this.state.currentView === 'history') return this.buildHistoryText();
     if (this.state.currentView === 'recent_collects') return this.buildRecentCollectsText();
+    if (this.state.currentView === 'commands') return this.buildCommandsText();
     return this.buildDashboardText();
   }
 
@@ -257,10 +265,12 @@ class Dashboard {
     const persisted = this.sessionRepository.getState();
     const rows = this.state.historyRuns.length
       ? this.state.historyRuns.map((run) => {
-          const rewards = (run.rewards || []).map((reward) => reward.name).join(', ') || 'без нагород';
           const progress = run.expectedCount ? ` ${run.collectedCount}/${run.expectedCount}` : '';
-          return `${formatDateTime(run.createdAt)} - ${run.status}${progress}: ${rewards}`;
-        }).join('\n')
+          const rewards = (run.rewards || []).length
+            ? (run.rewards || []).map((reward) => reward.name).join(',\n')
+            : 'без нагород';
+          return `${formatDateTime(run.createdAt)} - ${run.status}${progress}:\n${rewards}`;
+        }).join('\n\n')
       : 'Історія поки порожня.';
 
     return truncate([
@@ -283,9 +293,6 @@ class Dashboard {
           const rewards = (run.rewards || []).length
             ? (run.rewards || []).map((reward) => `- ${reward.name}`).join('\n')
             : '- Нагороди не визначено';
-          const images = (run.imagePaths || []).length
-            ? (run.imagePaths || []).map((imagePath, imageIndex) => `- image ${imageIndex + 1}: ${imagePath}`).join('\n')
-            : '- немає збережених зображень';
           return [
             `Збір ${formatDateTime(run.createdAt)}`,
             `Дата: ${formatDateTime(run.createdAt)}`,
@@ -293,9 +300,7 @@ class Dashboard {
             `Підтверджено: ${formatDateTime(run.verifiedAt)}`,
             `Прогрес: ${run.collectedCount}/${run.expectedCount}`,
             'Нагороди:',
-            rewards,
-            'Зображення:',
-            images
+            rewards
           ].join('\n');
         }).join('\n\n')
       : 'Успішних зборів поки немає.';
@@ -309,6 +314,26 @@ class Dashboard {
       '',
       'Останні повідомлення:',
       this.formatList(this.state.recentMessages, 'Поки немає повідомлень')
+    ].join('\n'), MAX_CAPTION_LENGTH);
+  }
+
+  buildCommandsText() {
+    return truncate([
+      'Asphalt Daily Rewards',
+      '',
+      'Команди:',
+      '/doctor - стан бота, PM2, polling, scheduler',
+      '/verify_shop - перевірити магазин без збору',
+      '/logs 50 - останні PM2 logs',
+      '/snapshot - останній debug snapshot',
+      '/next - наступний запуск',
+      '/images - картинки останнього збору',
+      '/history - історія зборів',
+      '/recent_collects - останні збори',
+      '/check_session - перевірити сесію',
+      '/collect - ручний збір',
+      '/login - авторизація',
+      '/dashboard_reset - пересоздати dashboard'
     ].join('\n'), MAX_CAPTION_LENGTH);
   }
 

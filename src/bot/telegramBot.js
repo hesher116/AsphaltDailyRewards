@@ -32,6 +32,28 @@ function classifyTelegramPollingError(error, streak) {
 }
 
 function dashboardKeyboard(view = 'dashboard') {
+  if (view === 'commands') {
+    return {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: 'Назад до dashboard', callback_data: 'dashboard' }],
+          [
+            { text: 'Doctor', callback_data: 'cmd_doctor' },
+            { text: 'Verify shop', callback_data: 'cmd_verify_shop' }
+          ],
+          [
+            { text: 'Logs', callback_data: 'cmd_logs' },
+            { text: 'Snapshot', callback_data: 'cmd_snapshot' }
+          ],
+          [
+            { text: 'Next', callback_data: 'cmd_next' },
+            { text: 'Images', callback_data: 'cmd_images' }
+          ]
+        ]
+      }
+    };
+  }
+
   if (view === 'history' || view === 'recent_collects') {
     return {
       reply_markup: {
@@ -55,7 +77,8 @@ function dashboardKeyboard(view = 'dashboard') {
           { text: 'Останні збори', callback_data: 'recent_collects' }
         ],
         [
-          { text: 'Історія', callback_data: 'history' }
+          { text: 'Історія', callback_data: 'history' },
+          { text: 'Команди', callback_data: 'commands' }
         ]
       ]
     }

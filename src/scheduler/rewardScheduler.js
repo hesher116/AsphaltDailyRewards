@@ -41,6 +41,20 @@ function collectErrorForUser(error) {
   return firstLine.length > 220 ? `${firstLine.slice(0, 217)}...` : firstLine;
 }
 
+function rewardSignature(runOrResult) {
+  return (runOrResult && runOrResult.rewards ? runOrResult.rewards : [])
+    .map((reward) => String(reward.name || '').trim().toLowerCase())
+    .filter(Boolean)
+    .join(' | ');
+}
+
+function rewardNames(runOrResult) {
+  return (runOrResult && runOrResult.rewards ? runOrResult.rewards : [])
+    .map((reward) => reward.name)
+    .filter(Boolean)
+    .join(', ');
+}
+
 class RewardScheduler {
   constructor({ collector, rewardsRepository, sessionRepository, notify }) {
     this.collector = collector;
@@ -288,6 +302,15 @@ class RewardScheduler {
     }
 
     finalResult = normalizeCollectResult(finalResult, { job, source });
+    const previousVerifiedRun = this.rewardsRepository.getRecentSuccessful(1)[0] || null;
+    const previousSignature = rewardSignature(previousVerifiedRun);
+    const currentSignature = rewardSignature(finalResult);
+    if (previousSignature && currentSignature && previousSignature !== currentSignature) {
+      const changeText = `Reward set changed: ${rewardNames(previousVerifiedRun)} -> ${rewardNames(finalResult)}`;
+      logger.warn(changeText);
+      this.collector.report(changeText, 'warn');
+      finalResult.technicalStatus = [finalResult.technicalStatus, 'reward_set_changed'].filter(Boolean).join('; ');
+    }
     const scheduleDecision = decideScheduleAction({ result: finalResult, source });
     const now = nowIso();
     let nextRunAt;
