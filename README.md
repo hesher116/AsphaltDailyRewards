@@ -12,6 +12,8 @@ The app is intentionally small: one Telegram bot, one scheduler, one browser aut
 - Persistent browser profile for saved sessions
 - Manual and scheduled reward collection
 - Scheduler: 24 hours plus persisted random offset
+- Extra daily shop check at 12:00 UTC that collects newly available gifts
+- Immediate Telegram failure alerts for scheduled collection failures
 - SQLite history and state
 - Reward image saving with 3-day cleanup
 - Debug HTML snapshots on collector crashes
@@ -43,6 +45,8 @@ Dashboard shows:
 - next scheduled collect
 - last 5 actions
 - last 5 user-facing system messages
+
+Long command output is kept outside the dashboard caption. `doctor` sends the full report as a separate Telegram message, and large log output is sent as a text document when it would become hard to read or exceed Telegram limits. The dashboard only records a short summary so the one-message dashboard stays readable.
 
 If the dashboard message is deleted or cannot be edited, run:
 
@@ -192,6 +196,8 @@ Important variables:
 - `ASPHALT_EMAIL` - Gameloft account email.
 - `HEADLESS` - `false` for visible local browser, `true` for server.
 - `BROWSER_ENGINE` - `chromium` by default, `firefox` for constrained Linux/proot fallback.
+- `APP_TIMEZONE` - user-facing timezone for logs, dashboard, Telegram messages, and scheduler display.
+- `BROWSER_TIMEZONE` - browser timezone. Defaults to `APP_TIMEZONE`.
 - `DEBUG` - technical stack traces and raw API errors.
 - `DATA_DIR` - root storage directory.
 - `BROWSER_PROFILE_DIR` - persistent Playwright profile.
@@ -202,6 +208,8 @@ Important variables:
 - `DEBUG_SNAPSHOT_RETENTION_DAYS` - debug snapshot cleanup window.
 - `RESTART_NOTIFICATION_TTL_HOURS` - how long the temporary PM2 restart notification stays in Telegram.
 - `HEARTBEAT_INTERVAL_HOURS` - how often the app logs and updates the dashboard that it is still running.
+- `DAILY_SHOP_CHECK_ENABLED` - enables the extra daily shop check.
+- `DAILY_SHOP_CHECK_UTC_HOUR` / `DAILY_SHOP_CHECK_UTC_MINUTE` - UTC time for the extra daily shop check, default `12:00`.
 
 ## Storage
 
@@ -244,11 +252,19 @@ After a successful collection, the next run is scheduled for:
 
 Manual failed collections do not overwrite an existing valid next scheduled run.
 
+In addition to the main 24h schedule, the app runs a small daily shop check at 12:00 UTC. It uses the same collector lock as the main scheduler, so it will not overlap an active collection. If gifts are found and verified, the next main run is recalculated from that verified collection time. If the daily check finds nothing or fails, the existing main schedule is preserved.
+
 After restart, the scheduler restores `nextRunAt` from SQLite. If it is already due, the app schedules the collection shortly after startup.
 
 On startup, if the last successful collect was more than 24 hours and 10 minutes ago, the app starts a collection immediately before the scheduler is initialized. If this startup collection fails, the existing valid schedule is preserved.
 
 Every `HEARTBEAT_INTERVAL_HOURS` hours the app logs and updates the dashboard with a short “program is alive” status and the next scheduled collection time.
+
+Scheduled collection failures are reported immediately in Telegram with the job time, expected reward count, collected count, error, and automatic recovery status. If the session is lost, the scheduler tries one automatic login recovery before sending the final failure alert. Manual failed attempts still only update the dashboard.
+
+## Time Strategy
+
+The app stores all persisted timestamps as UTC ISO strings in SQLite and runtime files. Display is localized through `APP_TIMEZONE`, which should be set to `Europe/Madrid` for mainland Spain. Do not use manual offsets such as `+2 hours`; daylight saving time is handled by the IANA timezone.
 
 ## PM2 Restart Notification
 

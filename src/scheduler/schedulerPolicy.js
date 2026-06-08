@@ -28,6 +28,15 @@ function decideScheduleAction({ result, source }) {
     };
   }
 
+  if (source === 'daily_check') {
+    return {
+      action: 'preserve_daily_check_failure',
+      scheduleChanged: false,
+      schedulePreserved: true,
+      message: 'Графік не змінено: daily shop check не знайшов перевіреного збору'
+    };
+  }
+
   return {
     action: 'reschedule_scheduled_failure',
     scheduleChanged: true,

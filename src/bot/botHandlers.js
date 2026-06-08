@@ -1,14 +1,33 @@
 const config = require('../config');
 const fsPromises = require('fs/promises');
 const path = require('path');
+const { monitorEventLoopDelay } = require('perf_hooks');
 const logger = require('../utils/logger');
 const { formatDateTime } = require('../utils/time');
 const { findAvailableRewards } = require('../automation/rewardParser');
 const selectors = require('../automation/selectors');
-const { sendDocumentToChat, sendMessageToChat } = require('./telegramBot');
+const { sendDocumentToChat, sendLongMessageToChat, sendMessageToChat, sendTextReportToChat } = require('./telegramBot');
 const { buildCollectSummary, collectStatusTitle } = require('../automation/collectResult');
 
 const CALLBACK_COOLDOWN_MS = 1200;
+const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+eventLoopDelay.enable();
+
+const BOT_COMMANDS = [
+  { command: 'commands', description: 'Показати панель команд' },
+  { command: 'doctor', description: 'Повний технічний стан' },
+  { command: 'status', description: 'Короткий стан системи' },
+  { command: 'next', description: 'Наступний збір і daily check' },
+  { command: 'verify_shop', description: 'Перевірити магазин без збору' },
+  { command: 'logs', description: 'PM2 logs без обрізання' },
+  { command: 'snapshot', description: 'Останній debug snapshot' },
+  { command: 'collect', description: 'Ручний збір подарунків' },
+  { command: 'recent_collects', description: 'Останні успішні збори' },
+  { command: 'history', description: 'Історія зборів' },
+  { command: 'login', description: 'Авторизація через OTP' },
+  { command: 'check_session', description: 'Перевірити сесію' },
+  { command: 'dashboard_reset', description: 'Перестворити dashboard' }
+];
 
 const CALLBACK_LABELS = {
   dashboard: 'dashboard',
@@ -57,7 +76,15 @@ function tailLines(text, limit) {
 
 function codeBlock(text) {
   const value = String(text || '').trim() || 'empty';
-  return `\`\`\`\n${value.slice(-3500)}\n\`\`\``;
+  return `\`\`\`\n${value}\n\`\`\``;
+}
+
+function dashboardSummary(title, detail) {
+  return [
+    detail,
+    '',
+    `Повний звіт надіслано окремо: ${title}.`
+  ].filter(Boolean).join('\n');
 }
 
 async function guardAdmin(bot, msgOrQuery) {
@@ -109,6 +136,8 @@ function formatDoctor(ctx) {
     ? ctx.bot.getPollingHealth()
     : {};
   const memory = process.memoryUsage();
+  const eventLoopP95Ms = Math.round(eventLoopDelay.percentile(95) / 1e6);
+  const eventLoopMaxMs = Math.round(eventLoopDelay.max / 1e6);
   const lastError = polling.lastError
     ? `${polling.lastError.kind}: ${polling.lastError.description}`
     : 'немає';
@@ -118,12 +147,14 @@ function formatDoctor(ctx) {
     `PM2: ${process.env.PM2_HOME ? 'так' : 'невідомо'}`,
     `Uptime: ${Math.round(process.uptime() / 60)} хв`,
     `Memory RSS: ${Math.round(memory.rss / 1024 / 1024)} MB`,
+    `Event loop delay p95/max: ${eventLoopP95Ms}/${eventLoopMaxMs} ms`,
     `Auth: ${state.authStatus}`,
     `Browser: ${state.activeBrowserSession ? 'active' : 'closed'}`,
     `Collect running: ${ctx.scheduler.isRunning() ? 'yes' : 'no'}`,
     `Last run: ${lastRun ? `${formatDateTime(lastRun.createdAt)} ${lastRun.status} ${lastRun.collectedCount}/${lastRun.expectedCount}` : 'немає'}`,
     `Verified at: ${formatDateTime(lastRun && lastRun.verifiedAt)}`,
     `Next run: ${formatDateTime(state.nextRunAt)}`,
+    `Daily shop check: ${formatDateTime(ctx.scheduler.getDailyShopCheckNextAt && ctx.scheduler.getDailyShopCheckNextAt())}`,
     `Polling: ${polling.polling ? 'on' : 'off'}, errors=${polling.errorStreak || 0}`,
     `Polling last success: ${formatDateTime(polling.lastSuccessAt)}`,
     `Polling last error: ${lastError}`
@@ -194,9 +225,11 @@ async function showStatus(ctx) {
 }
 
 async function showDoctor(ctx) {
+  const report = formatDoctor(ctx);
+  await sendLongMessageToChat(ctx.bot, config.telegram.chatId, report);
   await ctx.dashboard.setStatus('Doctor оновлено', {
     action: 'Doctor',
-    message: formatDoctor(ctx)
+    message: dashboardSummary('Doctor', 'Ключові показники: PM2, uptime, memory, event loop, auth, polling, next run.')
   });
 }
 
@@ -205,6 +238,7 @@ async function showNextRun(ctx) {
   const lastRun = ctx.rewardsRepository.getLast();
   const message = [
     `Наступний збір: ${formatDateTime(state.nextRunAt)}`,
+    `Daily shop check: ${formatDateTime(ctx.scheduler.getDailyShopCheckNextAt && ctx.scheduler.getDailyShopCheckNextAt())}`,
     `Останній verified: ${formatDateTime(state.lastSuccessfulCollectAt)}`,
     `Останній run: ${lastRun ? `${formatDateTime(lastRun.createdAt)} ${lastRun.status} ${lastRun.collectedCount}/${lastRun.expectedCount}` : 'немає'}`
   ].join('\n');
@@ -233,10 +267,15 @@ async function sendLatestSnapshot(ctx) {
 
 async function showLogs(ctx, lines = 30) {
   const logs = await readPm2Logs(lines);
-  await sendMessageToChat(ctx.bot, config.telegram.chatId, codeBlock(logs));
+  await sendTextReportToChat(ctx.bot, config.telegram.chatId, {
+    title: `PM2 logs (${lines} lines)`,
+    text: codeBlock(logs),
+    fileName: `pm2-logs-${Date.now()}.txt`,
+    preferDocument: logs.length > 3200
+  });
   await ctx.dashboard.setStatus('Logs надіслано', {
     action: 'Logs',
-    message: 'Останні PM2 logs надіслано окремим повідомленням'
+    message: `Останні PM2 logs (${lines} lines) надіслано окремо без обрізання`
   });
 }
 
@@ -383,6 +422,12 @@ async function collectNow(ctx) {
 }
 
 function registerBotHandlers({ bot, authFlow, scheduler, rewardsRepository, sessionRepository, dashboard }) {
+  if (typeof bot.setMyCommands === 'function') {
+    bot.setMyCommands(BOT_COMMANDS).catch((error) => {
+      logger.debug({ error }, 'Failed to update Telegram command menu');
+    });
+  }
+
   const ctx = {
     bot,
     authFlow,

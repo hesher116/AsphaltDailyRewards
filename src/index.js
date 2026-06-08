@@ -12,7 +12,7 @@ const StatusReporter = require('./status/statusReporter');
 const Dashboard = require('./bot/dashboard');
 const { createTelegramBot, deleteMessageSafe, sendMessageToChat } = require('./bot/telegramBot');
 const { registerBotHandlers } = require('./bot/botHandlers');
-const { formatDateTime } = require('./utils/time');
+const { formatDateTime, timeZoneName } = require('./utils/time');
 const {
   clearRestartNotification,
   consumeGracefulShutdownFlag,
@@ -185,6 +185,17 @@ async function bootstrap() {
         return;
       }
 
+      if (event.type === 'collect_failure_alert') {
+        await sendMessageToChat(bot, config.telegram.chatId, event.text);
+        if (dashboard) {
+          await dashboard.setStatus('Collect failure alert sent', {
+            action: 'Collect failure alert',
+            message: event.text
+          });
+        }
+        return;
+      }
+
       if (event.type !== 'collect_result') return;
 
       if (dashboard) {
@@ -219,7 +230,7 @@ async function bootstrap() {
 
   await dashboard.setStatus('Очікую команду', {
     action: 'Запуск системи',
-    message: `Browser mode: HEADLESS=${config.browser.headless ? 'true' : 'false'}`
+    message: `Browser mode: HEADLESS=${config.browser.headless ? 'true' : 'false'} | Time zone: ${timeZoneName()}`
   });
 
   await runStartupAutoCollectIfNeeded({ scheduler, sessionRepository, dashboard });

@@ -37,6 +37,7 @@ function normalizeCollectResult(result = {}, options = {}) {
     nextRunAt: result.nextRunAt || options.nextRunAt || null,
     schedulePreserved: Boolean(result.schedulePreserved || options.schedulePreserved),
     scheduleChanged: Boolean(result.scheduleChanged || options.scheduleChanged),
+    autoRecovery: result.autoRecovery || null,
     createdAt: result.createdAt || null,
     id: result.id || null
   };

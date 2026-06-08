@@ -1,10 +1,10 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { delay, nowIso, formatDateTimeForLog } = require('../utils/time');
+const { delay, nowIso, formatDateTime, formatDateTimeForLog } = require('../utils/time');
 const { removeOldFiles } = require('../utils/fileCleanup');
 const { savePageSnapshot } = require('../utils/debugSnapshot');
 const { safeWriteLastCollect } = require('../utils/runtimeState');
-const { normalizeCollectResult } = require('../automation/collectResult');
+const { isVerifiedCollect, normalizeCollectResult } = require('../automation/collectResult');
 const { decideScheduleAction } = require('./schedulerPolicy');
 
 function randomOffsetMs() {
@@ -55,6 +55,64 @@ function rewardNames(runOrResult) {
     .join(', ');
 }
 
+function nextUtcDailyCheckDate(now = new Date()) {
+  const hour = Math.min(23, Math.max(0, config.runtime.dailyShopCheckUtcHour));
+  const minute = Math.min(59, Math.max(0, config.runtime.dailyShopCheckUtcMinute));
+  const next = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    hour,
+    minute,
+    0,
+    0
+  ));
+  if (next.getTime() <= now.getTime()) {
+    next.setUTCDate(next.getUTCDate() + 1);
+  }
+  return next;
+}
+
+function sourceLabel(source) {
+  if (source === 'daily_check') return 'daily shop check';
+  if (source === 'scheduled') return 'scheduled collect';
+  if (source === 'startup') return 'startup collect';
+  if (source === 'manual') return 'manual collect';
+  return source || 'collect';
+}
+
+function recoveryText(recovery) {
+  if (!recovery || !recovery.attempted) return 'not attempted';
+  const parts = [`attempted: yes`, `result: ${recovery.result || 'unknown'}`];
+  if (recovery.retried) parts.push('collect retried: yes');
+  if (recovery.error) parts.push(`error: ${recovery.error}`);
+  return parts.join(', ');
+}
+
+function shouldAlertFailure(result, source) {
+  if (source === 'manual') return false;
+  if (isVerifiedCollect(result.status)) return false;
+  if (result.status === 'already_running') return false;
+  return Number(result.expectedCount || 0) > Number(result.collectedCount || 0)
+    || ['session_lost', 'error', 'partial'].includes(result.status);
+}
+
+function buildFailureAlert(result) {
+  const when = result.createdAt || result.verifiedAt || nowIso();
+  return [
+    '⚠️ Asphalt reward collect failed',
+    `Time: ${formatDateTime(when)}`,
+    `Job: ${result.jobLabel || sourceLabel(result.source)}`,
+    `Source: ${sourceLabel(result.source)}`,
+    `Expected rewards: ${result.expectedCount}`,
+    `Collected rewards: ${result.collectedCount}`,
+    `Status: ${result.status}`,
+    `Error: ${result.error || result.description || result.technicalStatus || 'unknown'}`,
+    `Auto recovery: ${recoveryText(result.autoRecovery)}`,
+    `Next run: ${formatDateTime(result.nextRunAt)}`
+  ].join('\n');
+}
+
 class RewardScheduler {
   constructor({ collector, rewardsRepository, sessionRepository, notify }) {
     this.collector = collector;
@@ -64,6 +122,8 @@ class RewardScheduler {
     this.timer = null;
     this.heartbeatTimer = null;
     this.dailyAuditTimer = null;
+    this.dailyShopCheckTimer = null;
+    this.dailyShopCheckNextAt = null;
     this.collectRunning = false;
     this.stopped = false;
   }
@@ -88,6 +148,7 @@ class RewardScheduler {
     this.scheduleAt(this.resolveStartupNextRun(this.sessionRepository.getState()));
     this.startHeartbeat();
     this.startDailyAudit();
+    this.startDailyShopCheck();
   }
 
   stop() {
@@ -103,6 +164,10 @@ class RewardScheduler {
     if (this.dailyAuditTimer) {
       clearTimeout(this.dailyAuditTimer);
       this.dailyAuditTimer = null;
+    }
+    if (this.dailyShopCheckTimer) {
+      clearTimeout(this.dailyShopCheckTimer);
+      this.dailyShopCheckTimer = null;
     }
   }
 
@@ -141,6 +206,32 @@ class RewardScheduler {
 
     if (this.dailyAuditTimer) clearTimeout(this.dailyAuditTimer);
     this.dailyAuditTimer = setTimeout(tick, intervalMs);
+  }
+
+  startDailyShopCheck() {
+    if (!config.runtime.dailyShopCheckEnabled) return;
+
+    const scheduleNext = () => {
+      if (this.stopped) return;
+      const next = nextUtcDailyCheckDate();
+      this.dailyShopCheckNextAt = next.toISOString();
+      const delayMs = Math.max(config.scheduler.startupDelayMs, next.getTime() - Date.now());
+      logger.info(`Daily shop check scheduled for ${formatDateTimeForLog(next)} (UTC ${String(config.runtime.dailyShopCheckUtcHour).padStart(2, '0')}:${String(config.runtime.dailyShopCheckUtcMinute).padStart(2, '0')})`);
+      if (this.dailyShopCheckTimer) clearTimeout(this.dailyShopCheckTimer);
+      this.dailyShopCheckTimer = setTimeout(async () => {
+        if (this.stopped) return;
+        try {
+          await this.runDailyShopCheck();
+        } catch (error) {
+          logger.error('Daily shop check failed outside normal result flow');
+          logger.debug({ error }, 'Daily shop check failed');
+        } finally {
+          scheduleNext();
+        }
+      }, delayMs);
+    };
+
+    scheduleNext();
   }
 
   buildAuditSnapshot() {
@@ -247,6 +338,20 @@ class RewardScheduler {
     return this.runCollect({ notify: true, allowRetries: true, source: 'scheduled' });
   }
 
+  async runDailyShopCheck() {
+    if (this.collectRunning) {
+      const text = 'Daily shop check skipped: another collect is already running';
+      logger.warn(text);
+      if (this.notify) await this.notify({ type: 'info', text }).catch(() => {});
+      return { status: 'already_running' };
+    }
+    return this.runCollect({ notify: true, allowRetries: true, source: 'daily_check' });
+  }
+
+  getDailyShopCheckNextAt() {
+    return this.dailyShopCheckNextAt;
+  }
+
   async runCollect({ notify, allowRetries, source }) {
     if (this.collectRunning) return { status: 'already_running' };
 
@@ -273,6 +378,10 @@ class RewardScheduler {
           finalResult = await this.collector.collect(job);
           if (finalResult.status !== 'unavailable') break;
         }
+      }
+
+      if (allowRetries && finalResult.status === 'session_lost') {
+        finalResult = await this.trySessionRecoveryAndRetry(job, finalResult);
       }
     } catch (error) {
       const userError = collectErrorForUser(error);
@@ -330,6 +439,10 @@ class RewardScheduler {
       nextRunAt = this.preserveExistingSchedule();
       this.sessionRepository.update({ lastRunAt: now });
       logger.warn(`${job.label}: ${scheduleDecision.message}. Наступний збір: ${formatDateTimeForLog(nextRunAt)}`);
+    } else if (scheduleDecision.action === 'preserve_daily_check_failure') {
+      nextRunAt = this.preserveExistingSchedule();
+      this.sessionRepository.update({ lastRunAt: now });
+      logger.warn(`${job.label}: ${scheduleDecision.message}. Наступний збір: ${formatDateTimeForLog(nextRunAt)}`);
     } else {
       const nextDate = this.computeNextFrom(new Date());
       nextRunAt = nextDate.toISOString();
@@ -358,6 +471,7 @@ class RewardScheduler {
         scheduleAction: scheduleDecision.action,
         scheduleChanged: scheduleDecision.scheduleChanged,
         schedulePreserved: scheduleDecision.schedulePreserved,
+        autoRecovery: finalResult.autoRecovery,
         transitions: finalResult.rewards.map((reward) => ({
           name: reward.name,
           availableBefore: reward.availableBefore,
@@ -382,9 +496,78 @@ class RewardScheduler {
 
     if (notify && this.notify) {
       await this.notify({ type: 'collect_result', result: resultWithSchedule });
+      if (shouldAlertFailure(resultWithSchedule, source)) {
+        await this.notify({
+          type: 'collect_failure_alert',
+          result: resultWithSchedule,
+          text: buildFailureAlert(resultWithSchedule)
+        });
+      }
     }
 
     return resultWithSchedule;
+  }
+
+  async trySessionRecoveryAndRetry(job, failedResult) {
+    const recovery = {
+      attempted: true,
+      startedAt: nowIso(),
+      result: 'unknown',
+      retried: false,
+      error: null
+    };
+
+    logger.warn(`${job.label}: session lost, trying one automatic login recovery`);
+    this.collector.report('Сесія втрачена, пробую автоматичне відновлення один раз', 'warn');
+
+    try {
+      await this.collector.authFlow.close();
+      const loginResult = await this.collector.authFlow.startLogin();
+      recovery.result = loginResult.status;
+
+      if (loginResult.status === 'already_logged_in') {
+        recovery.retried = true;
+        const retryResult = await this.collector.collect({
+          ...job,
+          recoveryAttempt: true
+        });
+        return {
+          ...retryResult,
+          autoRecovery: {
+            ...recovery,
+            finishedAt: nowIso()
+          }
+        };
+      }
+
+      if (loginResult.status === 'need_otp') {
+        recovery.error = 'OTP required to finish automatic login';
+        return {
+          ...failedResult,
+          error: 'Session lost; automatic login requested OTP',
+          description: 'Session lost and automatic recovery needs OTP',
+          autoRecovery: {
+            ...recovery,
+            finishedAt: nowIso()
+          }
+        };
+      }
+
+      recovery.error = `Unexpected login result: ${loginResult.status}`;
+    } catch (error) {
+      recovery.result = 'failed';
+      recovery.error = collectErrorForUser(error);
+      logger.warn(`${job.label}: automatic session recovery failed: ${recovery.error}`);
+      logger.debug({ error }, 'Automatic session recovery failed');
+    }
+
+    return {
+      ...failedResult,
+      autoRecovery: {
+        ...recovery,
+        finishedAt: nowIso()
+      }
+    };
   }
 }
 

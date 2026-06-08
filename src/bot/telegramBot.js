@@ -4,6 +4,37 @@ const path = require('path');
 const config = require('../config');
 const logger = require('../utils/logger');
 
+const SAFE_TEXT_LIMIT = 3800;
+const REPORT_DOCUMENT_THRESHOLD = 12000;
+
+function splitLongText(text, limit = SAFE_TEXT_LIMIT) {
+  const value = String(text || '');
+  if (value.length <= limit) return [value];
+
+  const chunks = [];
+  let current = '';
+  for (const line of value.split(/\r?\n/)) {
+    const next = current ? `${current}\n${line}` : line;
+    if (next.length <= limit) {
+      current = next;
+      continue;
+    }
+
+    if (current) chunks.push(current);
+    if (line.length <= limit) {
+      current = line;
+      continue;
+    }
+
+    for (let index = 0; index < line.length; index += limit) {
+      chunks.push(line.slice(index, index + limit));
+    }
+    current = '';
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
 function classifyTelegramPollingError(error, streak) {
   const message = String(error && error.message ? error.message : error || '');
   const response = error && error.response ? error.response : {};
@@ -39,15 +70,22 @@ function dashboardKeyboard(view = 'dashboard') {
           [{ text: 'Назад до dashboard', callback_data: 'dashboard' }],
           [
             { text: 'Doctor', callback_data: 'cmd_doctor' },
-            { text: 'Verify shop', callback_data: 'cmd_verify_shop' }
+            { text: 'Статус', callback_data: 'status' },
+            { text: 'Next', callback_data: 'cmd_next' }
           ],
           [
+            { text: 'Verify shop', callback_data: 'cmd_verify_shop' },
             { text: 'Logs', callback_data: 'cmd_logs' },
             { text: 'Snapshot', callback_data: 'cmd_snapshot' }
           ],
           [
-            { text: 'Next', callback_data: 'cmd_next' },
-            { text: 'Images', callback_data: 'cmd_images' }
+            { text: 'Зібрати', callback_data: 'collect' },
+            { text: 'Увійти', callback_data: 'login' },
+            { text: 'Сесія', callback_data: 'check_session' }
+          ],
+          [
+            { text: 'Останні збори', callback_data: 'recent_collects' },
+            { text: 'Історія', callback_data: 'history' }
           ]
         ]
       }
@@ -129,6 +167,13 @@ class SimpleTelegramBot extends EventEmitter {
 
   async deleteWebHook(options = {}) {
     return this.requestJson('deleteWebhook', options);
+  }
+
+  async setMyCommands(commands, options = {}) {
+    return this.requestJson('setMyCommands', {
+      commands,
+      ...options
+    });
   }
 
   async sendMessage(chatId, text, options = {}) {
@@ -381,6 +426,43 @@ async function sendMessageToChat(bot, chatId, text, options = {}) {
   }
 }
 
+async function sendLongMessageToChat(bot, chatId, text, options = {}) {
+  const chunks = splitLongText(text);
+  const sent = [];
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const prefix = chunks.length > 1 ? `Part ${index + 1}/${chunks.length}\n` : '';
+    const message = `${prefix}${chunks[index]}`;
+    const result = await sendMessageToChat(bot, chatId, message, options);
+    if (result) sent.push(result);
+  }
+
+  return sent;
+}
+
+async function sendTextReportToChat(bot, chatId, { title, text, fileName, preferDocument = false }) {
+  const value = String(text || '').trim() || 'empty';
+  const header = title ? `${title}\n\n` : '';
+  const fullText = `${header}${value}`;
+
+  if (!preferDocument && fullText.length <= REPORT_DOCUMENT_THRESHOLD) {
+    return sendLongMessageToChat(bot, chatId, fullText);
+  }
+
+  const safeName = String(fileName || 'telegram-report.txt').replace(/[^\w.-]+/g, '_');
+  const reportPath = path.join(config.storage.dataDir, 'telegram-reports', safeName);
+  await fs.mkdir(path.dirname(reportPath), { recursive: true });
+  await fs.writeFile(reportPath, fullText, 'utf8');
+
+  const summary = [
+    title || 'Report',
+    `Повний текст не вміщується в Telegram message (${fullText.length} chars).`,
+    'Надсилаю повний звіт файлом без обрізання.'
+  ].join('\n');
+  await sendMessageToChat(bot, chatId, summary);
+  return sendDocumentToChat(bot, chatId, reportPath, title || 'Full report');
+}
+
 async function editMessage(bot, chatId, messageId, text, options = {}) {
   try {
     return await bot.editMessageText(text, {
@@ -392,6 +474,20 @@ async function editMessage(bot, chatId, messageId, text, options = {}) {
   } catch (error) {
     if (String(error.message || '').includes('message is not modified')) return true;
     logger.debug({ error }, 'editMessageText failed');
+    return null;
+  }
+}
+
+async function editCaption(bot, chatId, messageId, caption, options = {}) {
+  try {
+    return await bot.editMessageCaption(caption, {
+      chat_id: chatId,
+      message_id: messageId,
+      ...options
+    });
+  } catch (error) {
+    if (String(error.message || '').includes('message is not modified')) return true;
+    logger.debug({ error }, 'editMessageCaption failed');
     return null;
   }
 }
@@ -486,10 +582,13 @@ async function deleteMessageSafe(bot, chatId, messageId) {
 module.exports = {
   createTelegramBot,
   sendMessageToChat,
+  sendLongMessageToChat,
+  sendTextReportToChat,
   sendMediaGroupToChat,
   sendDocumentToChat,
   sendPhotoToChat,
   editMessage,
+  editCaption,
   editPhotoMedia,
   sendAdminMessage,
   deleteMessageSafe,

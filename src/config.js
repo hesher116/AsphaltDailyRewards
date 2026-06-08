@@ -25,9 +25,23 @@ function listFromEnv(value) {
     .filter(Boolean);
 }
 
+function validTimeZone(value, fallback) {
+  const timeZone = value || fallback;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date());
+    return timeZone;
+  } catch {
+    return fallback;
+  }
+}
+
 const dataDir = resolvePath(process.env.DATA_DIR, './data');
+const appTimeZone = validTimeZone(process.env.APP_TIMEZONE || process.env.BROWSER_TIMEZONE, 'Europe/Madrid');
 
 module.exports = {
+  app: {
+    timeZone: appTimeZone
+  },
   telegram: {
     token: process.env.TELEGRAM_BOT_TOKEN || '',
     chatId: process.env.TELEGRAM_CHAT_ID || ''
@@ -45,7 +59,7 @@ module.exports = {
       height: intFromEnv(process.env.VIEWPORT_HEIGHT, 768)
     },
     locale: process.env.BROWSER_LOCALE || 'en-US',
-    timezoneId: process.env.BROWSER_TIMEZONE || 'Europe/Paris',
+    timezoneId: process.env.BROWSER_TIMEZONE || appTimeZone,
     userAgent: process.env.BROWSER_USER_AGENT || '',
     executablePath: process.env.BROWSER_EXECUTABLE_PATH || process.env.CHROMIUM_EXECUTABLE_PATH || '',
     extraArgs: listFromEnv(process.env.BROWSER_EXTRA_ARGS || process.env.CHROMIUM_EXTRA_ARGS)
@@ -63,6 +77,9 @@ module.exports = {
     restartNotificationTtlHours: intFromEnv(process.env.RESTART_NOTIFICATION_TTL_HOURS, 6),
     heartbeatIntervalHours: intFromEnv(process.env.HEARTBEAT_INTERVAL_HOURS, 6),
     dailyAuditIntervalHours: intFromEnv(process.env.DAILY_AUDIT_INTERVAL_HOURS, 24),
+    dailyShopCheckEnabled: boolFromEnv(process.env.DAILY_SHOP_CHECK_ENABLED, true),
+    dailyShopCheckUtcHour: intFromEnv(process.env.DAILY_SHOP_CHECK_UTC_HOUR, 12),
+    dailyShopCheckUtcMinute: intFromEnv(process.env.DAILY_SHOP_CHECK_UTC_MINUTE, 0),
     startupAutoCollectThresholdMs: (24 * 60 + 10) * 60 * 1000,
     navigationTimeoutMs: intFromEnv(process.env.NAVIGATION_TIMEOUT_MS, 60000),
     selectorTimeoutMs: intFromEnv(process.env.SELECTOR_TIMEOUT_MS, 15000),

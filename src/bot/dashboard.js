@@ -1,10 +1,11 @@
 const fs = require('fs');
 const config = require('../config');
-const { formatDateTime } = require('../utils/time');
+const { formatDateTime, formatTime } = require('../utils/time');
 const { createImageCollage } = require('../utils/imageCollage');
 const {
   dashboardHeaderPath,
   dashboardKeyboard,
+  editCaption,
   editMessage,
   editPhotoMedia,
   sendAdminMessage,
@@ -16,16 +17,6 @@ const MAX_CAPTION_LENGTH = 1000;
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-function formatTime(isoOrDate) {
-  const date = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
-  if (Number.isNaN(date.getTime())) return '--:--:--';
-  return date.toLocaleTimeString('uk-UA', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
 }
 
 function truncate(text, limit) {
@@ -58,10 +49,17 @@ class Dashboard {
     };
     this.messageId = null;
     this.chatId = config.telegram.chatId || null;
+    this.currentPhotoPath = null;
     this.busy = false;
     this.updateChain = Promise.resolve();
+    this.renderTimer = null;
+    this.pendingRenderResolvers = [];
     this.boundHandler = (event) => {
-      this.setStatus(event.message, { message: event.message, action: event.message }).catch(() => {});
+      this.setStatus(event.message, {
+        message: event.message,
+        action: event.message,
+        debounced: true
+      }).catch(() => {});
     };
   }
 
@@ -136,13 +134,13 @@ class Dashboard {
     await this.render();
   }
 
-  async setStatus(status, { action, message, operation } = {}) {
+  async setStatus(status, { action, message, operation, debounced = false } = {}) {
     this.state.currentView = 'dashboard';
     this.state.status = status || this.state.status;
     this.state.currentOperation = operation || action || status || this.state.currentOperation;
     this.addAction(action || status);
     this.addMessage(message || status);
-    await this.render();
+    await this.render({ debounced });
   }
 
   async showDashboard(message) {
@@ -182,7 +180,30 @@ class Dashboard {
     await this.render();
   }
 
-  async render() {
+  async render(options = {}) {
+    if (!options.debounced) return this.enqueueRender();
+
+    return new Promise((resolve, reject) => {
+      this.pendingRenderResolvers.push({ resolve, reject });
+      if (this.renderTimer) return;
+      this.renderTimer = setTimeout(() => {
+        this.renderTimer = null;
+        const resolvers = this.pendingRenderResolvers.splice(0);
+        this.enqueueRender().then(
+          (value) => resolvers.forEach((item) => item.resolve(value)),
+          (error) => resolvers.forEach((item) => item.reject(error))
+        );
+      }, 900);
+    });
+  }
+
+  async enqueueRender() {
+    if (this.renderTimer) {
+      clearTimeout(this.renderTimer);
+      this.renderTimer = null;
+      const resolvers = this.pendingRenderResolvers.splice(0);
+      resolvers.forEach((item) => item.resolve(null));
+    }
     this.updateChain = this.updateChain.then(() => this.renderNow()).catch(() => {});
     return this.updateChain;
   }
@@ -193,12 +214,18 @@ class Dashboard {
     const photoPath = await this.getCurrentPhotoPath();
 
     if (this.messageId) {
-      const edited = photoPath
-        ? await editPhotoMedia(this.bot, this.chatId, this.messageId, photoPath, text, keyboard)
-        : await editMessage(this.bot, this.chatId, this.messageId, text, keyboard);
+      let edited = null;
+      if (photoPath && this.currentPhotoPath === photoPath) {
+        edited = await editCaption(this.bot, this.chatId, this.messageId, text, keyboard);
+      } else if (photoPath) {
+        edited = await editPhotoMedia(this.bot, this.chatId, this.messageId, photoPath, text, keyboard);
+      } else if (!this.currentPhotoPath) {
+        edited = await editMessage(this.bot, this.chatId, this.messageId, text, keyboard);
+      }
       if (edited) return;
       await this.bot.deleteMessage(this.chatId, this.messageId).catch(() => {});
       this.messageId = null;
+      this.currentPhotoPath = null;
       this.sessionRepository.update({ dashboardMessageId: null });
     }
 
@@ -209,6 +236,7 @@ class Dashboard {
     if (sent && sent.message_id) {
       this.messageId = sent.message_id;
       this.chatId = sent.chat ? sent.chat.id : this.chatId;
+      this.currentPhotoPath = photoPath || null;
       this.sessionRepository.update({
         dashboardMessageId: sent.message_id,
         dashboardChatId: this.chatId
@@ -321,19 +349,19 @@ class Dashboard {
     return truncate([
       'Asphalt Daily Rewards',
       '',
-      'Команди:',
-      '/doctor - стан бота, PM2, polling, scheduler',
-      '/verify_shop - перевірити магазин без збору',
-      '/logs 50 - останні PM2 logs',
-      '/snapshot - останній debug snapshot',
-      '/next - наступний запуск',
-      '/images - картинки останнього збору',
-      '/history - історія зборів',
-      '/recent_collects - останні збори',
-      '/check_session - перевірити сесію',
-      '/collect - ручний збір',
-      '/login - авторизація',
-      '/dashboard_reset - пересоздати dashboard'
+      'Команди згруповано нижче кнопками.',
+      '',
+      'Діагностика:',
+      '/doctor, /status, /next, /logs 50, /snapshot',
+      '',
+      'Магазин і збір:',
+      '/verify_shop, /collect, /recent_collects, /history',
+      '',
+      'Сесія:',
+      '/login, /check_session',
+      '',
+      'Сервіс:',
+      '/dashboard_reset'
     ].join('\n'), MAX_CAPTION_LENGTH);
   }
 
