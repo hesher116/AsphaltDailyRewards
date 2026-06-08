@@ -349,19 +349,27 @@ class Dashboard {
     return truncate([
       'Asphalt Daily Rewards',
       '',
-      'Команди згруповано нижче кнопками.',
+      'Команди:',
       '',
       'Діагностика:',
-      '/doctor, /status, /next, /logs 50, /snapshot',
+      '/doctor - повний технічний стан',
+      '/status - короткий стан',
+      '/next - графік зборів',
+      '/logs 50 - PM2 logs',
+      '/snapshot - debug snapshot',
       '',
       'Магазин і збір:',
-      '/verify_shop, /collect, /recent_collects, /history',
+      '/verify_shop - перевірити магазин',
+      '/collect - ручний збір',
+      '/recent_collects - останні успіхи',
+      '/history - історія',
       '',
       'Сесія:',
-      '/login, /check_session',
+      '/login - авторизація OTP',
+      '/check_session - перевірити login',
       '',
       'Сервіс:',
-      '/dashboard_reset'
+      '/dashboard_reset - новий dashboard'
     ].join('\n'), MAX_CAPTION_LENGTH);
   }
 
