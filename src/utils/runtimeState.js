@@ -17,6 +17,10 @@ function restartNotificationPath() {
   return path.join(config.storage.dataDir, 'restart_notification.json');
 }
 
+function appHeartbeatPath() {
+  return path.join(config.storage.dataDir, 'app_heartbeat.json');
+}
+
 async function ensureDataDir() {
   await fs.mkdir(config.storage.dataDir, { recursive: true });
 }
@@ -73,6 +77,29 @@ async function writeRestartNotification(messageId) {
   });
 }
 
+async function writeAppHeartbeat(reason = 'heartbeat') {
+  await writeJsonFile(appHeartbeatPath(), {
+    at: new Date().toISOString(),
+    reason
+  });
+}
+
+async function readAppHeartbeat() {
+  const raw = await readTextFile(appHeartbeatPath());
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const at = new Date(parsed.at);
+    if (Number.isNaN(at.getTime())) return null;
+    return {
+      at: at.toISOString(),
+      reason: parsed.reason || 'unknown'
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function clearRestartNotification() {
   await fs.unlink(restartNotificationPath()).catch(() => {});
 }
@@ -103,6 +130,8 @@ module.exports = {
   readLastSuccessfulCollectTimestamp,
   writeLastSuccessfulCollectTimestamp,
   writeRestartNotification,
+  writeAppHeartbeat,
+  readAppHeartbeat,
   clearRestartNotification,
   isPm2Runtime,
   hoursSince,

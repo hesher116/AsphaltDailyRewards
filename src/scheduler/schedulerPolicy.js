@@ -10,7 +10,7 @@ function decideScheduleAction({ result, source }) {
     };
   }
 
-  if (source === 'manual') {
+  if (source === 'manual' || source === 'manual_collect') {
     return {
       action: 'preserve_manual_failure',
       scheduleChanged: false,
@@ -19,7 +19,7 @@ function decideScheduleAction({ result, source }) {
     };
   }
 
-  if (source === 'startup') {
+  if (source === 'startup' || source === 'startup_collect') {
     return {
       action: 'preserve_startup_failure',
       scheduleChanged: false,
@@ -28,7 +28,7 @@ function decideScheduleAction({ result, source }) {
     };
   }
 
-  if (source === 'daily_check') {
+  if (source === 'daily_check' || source === 'daily_store_check') {
     return {
       action: 'preserve_daily_check_failure',
       scheduleChanged: false,

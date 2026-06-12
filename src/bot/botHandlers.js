@@ -154,7 +154,9 @@ function formatDoctor(ctx) {
     `Last run: ${lastRun ? `${formatDateTime(lastRun.createdAt)} ${lastRun.status} ${lastRun.collectedCount}/${lastRun.expectedCount}` : 'немає'}`,
     `Verified at: ${formatDateTime(lastRun && lastRun.verifiedAt)}`,
     `Next run: ${formatDateTime(state.nextRunAt)}`,
+    `Short retry: ${formatDateTime(ctx.scheduler.getShortRetryNextAt && ctx.scheduler.getShortRetryNextAt())}`,
     `Daily shop check: ${formatDateTime(ctx.scheduler.getDailyShopCheckNextAt && ctx.scheduler.getDailyShopCheckNextAt())}`,
+    `Daily audit: ${formatDateTime(ctx.scheduler.getDailyAuditNextAt && ctx.scheduler.getDailyAuditNextAt())}`,
     `Polling: ${polling.polling ? 'on' : 'off'}, errors=${polling.errorStreak || 0}`,
     `Polling last success: ${formatDateTime(polling.lastSuccessAt)}`,
     `Polling last error: ${lastError}`
@@ -238,7 +240,9 @@ async function showNextRun(ctx) {
   const lastRun = ctx.rewardsRepository.getLast();
   const message = [
     `Наступний збір: ${formatDateTime(state.nextRunAt)}`,
+    `Short retry: ${formatDateTime(ctx.scheduler.getShortRetryNextAt && ctx.scheduler.getShortRetryNextAt())}`,
     `Daily shop check: ${formatDateTime(ctx.scheduler.getDailyShopCheckNextAt && ctx.scheduler.getDailyShopCheckNextAt())}`,
+    `Daily audit: ${formatDateTime(ctx.scheduler.getDailyAuditNextAt && ctx.scheduler.getDailyAuditNextAt())}`,
     `Останній verified: ${formatDateTime(state.lastSuccessfulCollectAt)}`,
     `Останній run: ${lastRun ? `${formatDateTime(lastRun.createdAt)} ${lastRun.status} ${lastRun.collectedCount}/${lastRun.expectedCount}` : 'немає'}`
   ].join('\n');

@@ -1,14 +1,8 @@
 const config = require('../config');
+const { formatDateTime, formatTime } = require('./time');
 
 function stamp() {
-  return new Date().toLocaleString('uk-UA', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
+  return formatDateTime(new Date());
 }
 
 function asError(value) {
@@ -19,11 +13,7 @@ function asError(value) {
 }
 
 function logTime() {
-  return new Date().toLocaleTimeString('uk-UA', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
+  return formatTime(new Date());
 }
 
 function write(level, message) {

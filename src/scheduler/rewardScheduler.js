@@ -1,15 +1,21 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { delay, nowIso, formatDateTime, formatDateTimeForLog } = require('../utils/time');
+const { delay, nowIso, formatDateTime, formatDateTimeForLog, nextDailyTimeInAppZone, timeZoneName } = require('../utils/time');
 const { removeOldFiles } = require('../utils/fileCleanup');
 const { savePageSnapshot } = require('../utils/debugSnapshot');
-const { safeWriteLastCollect } = require('../utils/runtimeState');
+const { safeWriteLastCollect, writeAppHeartbeat } = require('../utils/runtimeState');
 const { isVerifiedCollect, normalizeCollectResult } = require('../automation/collectResult');
 const { decideScheduleAction } = require('./schedulerPolicy');
 
 function randomOffsetMs() {
   const min = config.scheduler.minJitterMs;
   const max = config.scheduler.maxJitterMs;
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function randomRetryDelayMs() {
+  const min = Math.max(1000, config.runtime.rewardRetryMinDelayMs);
+  const max = Math.max(min, config.runtime.rewardRetryMaxDelayMs);
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
@@ -55,6 +61,25 @@ function rewardNames(runOrResult) {
     .join(', ');
 }
 
+function expectedBaselineFromRun(run) {
+  if (!run) return 0;
+  return Number(run.expectedCount || 0) || Number(run.collectedCount || 0) || (run.rewards || []).length || 0;
+}
+
+function progressLine(run) {
+  if (!run) return 'no runs yet';
+  const expected = Number(run.expectedCount || 0);
+  const collected = Number(run.collectedCount || 0);
+  if (expected <= 0 && run.status === 'unavailable') {
+    return '0 available; no claim attempt';
+  }
+  return `${collected}/${expected}`;
+}
+
+function findLastVerifiedRun(rewardsRepository) {
+  return rewardsRepository.getRecent(20).find((run) => isVerifiedCollect(run.status)) || null;
+}
+
 function nextUtcDailyCheckDate(now = new Date()) {
   const hour = Math.min(23, Math.max(0, config.runtime.dailyShopCheckUtcHour));
   const minute = Math.min(59, Math.max(0, config.runtime.dailyShopCheckUtcMinute));
@@ -74,10 +99,15 @@ function nextUtcDailyCheckDate(now = new Date()) {
 }
 
 function sourceLabel(source) {
-  if (source === 'daily_check') return 'daily shop check';
-  if (source === 'scheduled') return 'scheduled collect';
-  if (source === 'startup') return 'startup collect';
-  if (source === 'manual') return 'manual collect';
+  if (source === 'daily_store_check') return 'daily_store_check';
+  if (source === 'daily_check') return 'daily_store_check';
+  if (source === 'scheduled_collect') return 'scheduled_collect';
+  if (source === 'scheduled') return 'scheduled_collect';
+  if (source === 'retry_collect') return 'retry_collect';
+  if (source === 'startup_collect') return 'startup_collect';
+  if (source === 'startup') return 'startup_collect';
+  if (source === 'manual_collect') return 'manual_collect';
+  if (source === 'manual') return 'manual_collect';
   return source || 'collect';
 }
 
@@ -90,24 +120,25 @@ function recoveryText(recovery) {
 }
 
 function shouldAlertFailure(result, source) {
-  if (source === 'manual') return false;
+  const normalizedSource = sourceLabel(source);
+  if (normalizedSource === 'manual_collect') return false;
   if (isVerifiedCollect(result.status)) return false;
   if (result.status === 'already_running') return false;
+  if (normalizedSource === 'daily_store_check' && result.status === 'unavailable') return false;
   return Number(result.expectedCount || 0) > Number(result.collectedCount || 0)
-    || ['session_lost', 'error', 'partial'].includes(result.status);
+    || ['session_lost', 'error', 'partial', 'unavailable'].includes(result.status);
 }
 
 function buildFailureAlert(result) {
   const when = result.createdAt || result.verifiedAt || nowIso();
   return [
-    '⚠️ Asphalt reward collect failed',
+    'Щось пішло не так: подарунки не були зібрані, потрібна перевірка.',
     `Time: ${formatDateTime(when)}`,
+    `Job type: ${sourceLabel(result.source)}`,
     `Job: ${result.jobLabel || sourceLabel(result.source)}`,
-    `Source: ${sourceLabel(result.source)}`,
-    `Expected rewards: ${result.expectedCount}`,
-    `Collected rewards: ${result.collectedCount}`,
+    `Progress: ${result.collectedCount}/${result.expectedCount}`,
     `Status: ${result.status}`,
-    `Error: ${result.error || result.description || result.technicalStatus || 'unknown'}`,
+    `Reason: ${result.error || result.description || result.technicalStatus || 'unknown'}`,
     `Auto recovery: ${recoveryText(result.autoRecovery)}`,
     `Next run: ${formatDateTime(result.nextRunAt)}`
   ].join('\n');
@@ -122,8 +153,10 @@ class RewardScheduler {
     this.timer = null;
     this.heartbeatTimer = null;
     this.dailyAuditTimer = null;
+    this.dailyAuditNextAt = null;
     this.dailyShopCheckTimer = null;
     this.dailyShopCheckNextAt = null;
+    this.shortRetryNextAt = null;
     this.collectRunning = false;
     this.stopped = false;
   }
@@ -132,15 +165,22 @@ class RewardScheduler {
     return this.collectRunning;
   }
 
-  createCollectJob(source) {
+  createCollectJob(source, details = {}) {
     const lastRun = this.rewardsRepository.getLast();
     const id = (lastRun ? lastRun.id : 0) + 1;
     const startedAt = nowIso();
+    const normalizedSource = sourceLabel(source);
+    const retrySuffix = normalizedSource === 'retry_collect' && details.retryAttempt
+      ? ` attempt ${details.retryAttempt}/${details.retryMax || config.runtime.rewardRetryCount}`
+      : '';
     return {
       id,
       startedAt,
-      source,
-      label: `Collect ${formatDateTimeForLog(startedAt)}`
+      source: normalizedSource,
+      retryAttempt: details.retryAttempt || null,
+      retryMax: details.retryMax || null,
+      parentJobId: details.parentJobId || null,
+      label: `${normalizedSource}${retrySuffix} ${formatDateTimeForLog(startedAt)}`
     };
   }
 
@@ -175,6 +215,9 @@ class RewardScheduler {
     const intervalMs = Math.max(1, config.runtime.heartbeatIntervalHours) * 60 * 60 * 1000;
     const tick = async () => {
       if (this.stopped) return;
+      await writeAppHeartbeat('scheduler_heartbeat').catch((error) => {
+        logger.debug({ error }, 'Failed to write app heartbeat');
+      });
       const state = this.sessionRepository.getState();
       const text = `Програма працює. Наступний збір: ${formatDateTimeForLog(state.nextRunAt)}`;
       logger.info(text);
@@ -187,25 +230,37 @@ class RewardScheduler {
     };
 
     if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
+    writeAppHeartbeat('scheduler_start').catch((error) => {
+      logger.debug({ error }, 'Failed to write app heartbeat');
+    });
     this.heartbeatTimer = setTimeout(tick, intervalMs);
   }
 
   startDailyAudit() {
-    const intervalMs = Math.max(1, config.runtime.dailyAuditIntervalHours) * 60 * 60 * 1000;
-    const tick = async () => {
+    const scheduleNext = () => {
       if (this.stopped) return;
-      const audit = this.buildAuditSnapshot();
-      logger.info(`Daily audit: ${audit.text.replace(/\n/g, ' | ')}`);
-      if (this.notify) {
-        await this.notify({ type: 'daily_audit', audit }).catch((error) => {
-          logger.debug({ error }, 'Daily audit notification failed');
-        });
-      }
-      this.dailyAuditTimer = setTimeout(tick, intervalMs);
+      const next = nextDailyTimeInAppZone(config.runtime.dailyAuditHour, config.runtime.dailyAuditMinute);
+      this.dailyAuditNextAt = next.toISOString();
+      const delayMs = Math.max(config.scheduler.startupDelayMs, next.getTime() - Date.now());
+      logger.info(`Daily audit scheduled for ${formatDateTimeForLog(next)} (${timeZoneName()})`);
+      if (this.dailyAuditTimer) clearTimeout(this.dailyAuditTimer);
+      this.dailyAuditTimer = setTimeout(async () => {
+        if (this.stopped) return;
+        try {
+          const audit = this.buildAuditSnapshot();
+          logger.info(`Daily audit: ${audit.text.replace(/\n/g, ' | ')}`);
+          if (this.notify) {
+            await this.notify({ type: 'daily_audit', audit }).catch((error) => {
+              logger.debug({ error }, 'Daily audit notification failed');
+            });
+          }
+        } finally {
+          scheduleNext();
+        }
+      }, delayMs);
     };
 
-    if (this.dailyAuditTimer) clearTimeout(this.dailyAuditTimer);
-    this.dailyAuditTimer = setTimeout(tick, intervalMs);
+    scheduleNext();
   }
 
   startDailyShopCheck() {
@@ -237,13 +292,24 @@ class RewardScheduler {
   buildAuditSnapshot() {
     const state = this.sessionRepository.getState();
     const lastRun = this.rewardsRepository.getLast();
+    const lastVerifiedRun = findLastVerifiedRun(this.rewardsRepository);
+    const expectedBaseline = expectedBaselineFromRun(lastVerifiedRun);
+    const lastRunSource = lastRun && lastRun.verification ? sourceLabel(lastRun.verification.source || lastRun.source) : 'unknown';
+    const lastProblem = lastRun && !isVerifiedCollect(lastRun.status)
+      ? `${lastRun.status}: ${lastRun.error || lastRun.description || lastRun.technicalStatus || 'unknown'}`
+      : 'none';
     const text = [
       'Daily audit',
-      `Status: ${lastRun ? lastRun.status : 'no runs yet'}`,
-      `Last run: ${lastRun ? formatDateTimeForLog(lastRun.createdAt) : 'unknown'}`,
-      `Verified: ${lastRun && lastRun.verifiedAt ? formatDateTimeForLog(lastRun.verifiedAt) : 'unknown'}`,
-      `Progress: ${lastRun ? `${lastRun.collectedCount}/${lastRun.expectedCount}` : '0/0'}`,
-      `Next run: ${formatDateTimeForLog(state.nextRunAt)}`,
+      `Last job: ${lastRun ? `${lastRunSource} ${lastRun.status}` : 'no runs yet'}`,
+      `Last job time: ${lastRun ? formatDateTimeForLog(lastRun.createdAt) : 'unknown'}`,
+      `Last job progress: ${progressLine(lastRun)}`,
+      `Last verified collect: ${lastVerifiedRun ? `${formatDateTimeForLog(lastVerifiedRun.verifiedAt || lastVerifiedRun.createdAt)} ${lastVerifiedRun.collectedCount}/${lastVerifiedRun.expectedCount}` : 'unknown'}`,
+      `Expected baseline: ${expectedBaseline || 'unknown'}`,
+      `Last problem: ${lastProblem}`,
+      `Main next collect: ${formatDateTimeForLog(state.nextRunAt)}`,
+      `Short retry: ${this.shortRetryNextAt ? formatDateTimeForLog(this.shortRetryNextAt) : 'none'}`,
+      `Daily store check: ${this.dailyShopCheckNextAt ? formatDateTimeForLog(this.dailyShopCheckNextAt) : 'unknown'}`,
+      `Next audit: ${this.dailyAuditNextAt ? formatDateTimeForLog(this.dailyAuditNextAt) : 'unknown'}`,
       `Auth: ${state.authStatus}`,
       `Collect running: ${this.collectRunning ? 'yes' : 'no'}`
     ].join('\n');
@@ -327,15 +393,15 @@ class RewardScheduler {
   }
 
   async runManualCollect() {
-    return this.runCollect({ notify: false, allowRetries: false, source: 'manual' });
+    return this.runCollect({ notify: false, allowRetries: false, source: 'manual_collect' });
   }
 
   async runStartupCollect() {
-    return this.runCollect({ notify: false, allowRetries: false, source: 'startup' });
+    return this.runCollect({ notify: false, allowRetries: false, source: 'startup_collect' });
   }
 
   async runScheduledCollect() {
-    return this.runCollect({ notify: true, allowRetries: true, source: 'scheduled' });
+    return this.runCollect({ notify: true, allowRetries: true, source: 'scheduled_collect' });
   }
 
   async runDailyShopCheck() {
@@ -345,19 +411,27 @@ class RewardScheduler {
       if (this.notify) await this.notify({ type: 'info', text }).catch(() => {});
       return { status: 'already_running' };
     }
-    return this.runCollect({ notify: true, allowRetries: true, source: 'daily_check' });
+    return this.runCollect({ notify: true, allowRetries: false, source: 'daily_store_check' });
   }
 
   getDailyShopCheckNextAt() {
     return this.dailyShopCheckNextAt;
   }
 
-  async runCollect({ notify, allowRetries, source }) {
+  getDailyAuditNextAt() {
+    return this.dailyAuditNextAt;
+  }
+
+  getShortRetryNextAt() {
+    return this.shortRetryNextAt;
+  }
+
+  async runCollect({ notify, allowRetries, source, retryAttempt = null, retryMax = null, parentJobId = null }) {
     if (this.collectRunning) return { status: 'already_running' };
 
     this.collectRunning = true;
     let finalResult;
-    const job = this.createCollectJob(source);
+    const job = this.createCollectJob(source, { retryAttempt, retryMax, parentJobId });
 
     try {
       if (this.collector.statusReporter) {
@@ -371,13 +445,27 @@ class RewardScheduler {
 
       if (allowRetries && finalResult.status === 'unavailable') {
         for (let attempt = 1; attempt <= config.runtime.rewardRetryCount; attempt += 1) {
-          const text = `${job.label}: Подарунки ще недоступні. Спроба ${attempt}/${config.runtime.rewardRetryCount} буде пізніше.`;
+          const retryDelayMs = randomRetryDelayMs();
+          const retryAt = new Date(Date.now() + retryDelayMs);
+          this.shortRetryNextAt = retryAt.toISOString();
+          const text = `${job.label}: Подарунки ще недоступні. retry_collect ${attempt}/${config.runtime.rewardRetryCount} заплановано на ${formatDateTimeForLog(retryAt)}.`;
           logger.warn(text);
           if (this.notify) await this.notify({ type: 'info', text });
-          await delay(config.runtime.rewardRetryDelayMs);
-          finalResult = await this.collector.collect(job);
+          await delay(retryDelayMs);
+          const retryJob = this.createCollectJob('retry_collect', {
+            retryAttempt: attempt,
+            retryMax: config.runtime.rewardRetryCount,
+            parentJobId: job.id
+          });
+          if (this.collector.statusReporter) {
+            this.collector.statusReporter.setContext(retryJob);
+          }
+          logger.debug({ retryJob }, 'Starting reward retry collection job');
+          this.collector.report(`Старт повторної спроби (${retryJob.source})`);
+          finalResult = await this.collector.collect(retryJob);
           if (finalResult.status !== 'unavailable') break;
         }
+        this.shortRetryNextAt = null;
       }
 
       if (allowRetries && finalResult.status === 'session_lost') {
@@ -411,7 +499,19 @@ class RewardScheduler {
     }
 
     finalResult = normalizeCollectResult(finalResult, { job, source });
-    const previousVerifiedRun = this.rewardsRepository.getRecentSuccessful(1)[0] || null;
+    const previousVerifiedRun = findLastVerifiedRun(this.rewardsRepository);
+    if (
+      finalResult.status === 'unavailable' &&
+      Number(finalResult.expectedCount || 0) === 0 &&
+      ['scheduled_collect', 'retry_collect'].includes(sourceLabel(finalResult.source || source))
+    ) {
+      const expectedBaseline = expectedBaselineFromRun(previousVerifiedRun);
+      if (expectedBaseline > 0) {
+        finalResult.expectedCount = expectedBaseline;
+        finalResult.description = `No available rewards found; expected baseline ${expectedBaseline} from last verified collect`;
+        finalResult.technicalStatus = [finalResult.technicalStatus, `expected_baseline ${expectedBaseline}`].filter(Boolean).join('; ');
+      }
+    }
     const previousSignature = rewardSignature(previousVerifiedRun);
     const currentSignature = rewardSignature(finalResult);
     if (previousSignature && currentSignature && previousSignature !== currentSignature) {

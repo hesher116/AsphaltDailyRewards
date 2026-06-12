@@ -77,6 +77,8 @@ module.exports = {
     restartNotificationTtlHours: intFromEnv(process.env.RESTART_NOTIFICATION_TTL_HOURS, 6),
     heartbeatIntervalHours: intFromEnv(process.env.HEARTBEAT_INTERVAL_HOURS, 6),
     dailyAuditIntervalHours: intFromEnv(process.env.DAILY_AUDIT_INTERVAL_HOURS, 24),
+    dailyAuditHour: intFromEnv(process.env.DAILY_AUDIT_HOUR, 23),
+    dailyAuditMinute: intFromEnv(process.env.DAILY_AUDIT_MINUTE, 30),
     dailyShopCheckEnabled: boolFromEnv(process.env.DAILY_SHOP_CHECK_ENABLED, true),
     dailyShopCheckUtcHour: intFromEnv(process.env.DAILY_SHOP_CHECK_UTC_HOUR, 12),
     dailyShopCheckUtcMinute: intFromEnv(process.env.DAILY_SHOP_CHECK_UTC_MINUTE, 0),
@@ -86,6 +88,8 @@ module.exports = {
     claimTimeoutMs: intFromEnv(process.env.CLAIM_TIMEOUT_MS, 8000),
     rewardRetryCount: intFromEnv(process.env.REWARD_RETRY_COUNT, 2),
     rewardRetryDelayMs: intFromEnv(process.env.REWARD_RETRY_DELAY_MS, 120000),
+    rewardRetryMinDelayMs: intFromEnv(process.env.REWARD_RETRY_MIN_DELAY_MS, 60 * 1000),
+    rewardRetryMaxDelayMs: intFromEnv(process.env.REWARD_RETRY_MAX_DELAY_MS, 5 * 60 * 1000),
     maxRewardsPerCollect: intFromEnv(process.env.MAX_REWARDS_PER_COLLECT, 5),
     telegramPollingAlertAfterMs: intFromEnv(process.env.TELEGRAM_POLLING_ALERT_AFTER_MS, 5 * 60 * 1000)
   },

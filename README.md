@@ -208,8 +208,10 @@ Important variables:
 - `DEBUG_SNAPSHOT_RETENTION_DAYS` - debug snapshot cleanup window.
 - `RESTART_NOTIFICATION_TTL_HOURS` - how long the temporary PM2 restart notification stays in Telegram.
 - `HEARTBEAT_INTERVAL_HOURS` - how often the app logs and updates the dashboard that it is still running.
+- `DAILY_AUDIT_HOUR` / `DAILY_AUDIT_MINUTE` - local `APP_TIMEZONE` time for the daily audit, default `23:30`.
 - `DAILY_SHOP_CHECK_ENABLED` - enables the extra daily shop check.
 - `DAILY_SHOP_CHECK_UTC_HOUR` / `DAILY_SHOP_CHECK_UTC_MINUTE` - UTC time for the extra daily shop check, default `12:00`.
+- `REWARD_RETRY_MIN_DELAY_MS` / `REWARD_RETRY_MAX_DELAY_MS` - short unavailable retry window, default 1-5 minutes.
 
 ## Storage
 
@@ -229,6 +231,7 @@ SQLite stores:
 Runtime files in `data/`:
 
 - `graceful_shutdown.flag` - written on SIGINT/SIGTERM to distinguish graceful stops from crash/reboot restarts.
+- `app_heartbeat.json` - last local app heartbeat, used to estimate downtime after a crash/reboot.
 - `last_successful_collect.timestamp` - used on startup to decide whether immediate auto-collect is needed.
 - `restart_notification.json` - stores temporary restart notification metadata.
 
@@ -252,13 +255,22 @@ After a successful collection, the next run is scheduled for:
 
 Manual failed collections do not overwrite an existing valid next scheduled run.
 
-In addition to the main 24h schedule, the app runs a small daily shop check at 12:00 UTC. It uses the same collector lock as the main scheduler, so it will not overlap an active collection. If gifts are found and verified, the next main run is recalculated from that verified collection time. If the daily check finds nothing or fails, the existing main schedule is preserved.
+In addition to the main 24h schedule, the app runs a small daily store check at 12:00 UTC. It uses the same collector lock as the main scheduler, so it will not overlap an active collection. If gifts are found and verified, the next main run is recalculated from that verified collection time. If the daily store check finds nothing or fails, the existing main schedule is preserved.
+
+Job sources are logged explicitly:
+
+- `scheduled_collect` - the main 24h collection.
+- `daily_store_check` - the extra fixed-time shop refresh check.
+- `retry_collect` - a short retry after unavailable rewards.
+- `manual_collect` - an operator-triggered collection.
+
+If the main scheduled collection finds no available rewards, short retries are attempted in the configured 1-5 minute window. These retries are separate from the main 24h next collect and from the daily store check.
 
 After restart, the scheduler restores `nextRunAt` from SQLite. If it is already due, the app schedules the collection shortly after startup.
 
 On startup, if the last successful collect was more than 24 hours and 10 minutes ago, the app starts a collection immediately before the scheduler is initialized. If this startup collection fails, the existing valid schedule is preserved.
 
-Every `HEARTBEAT_INTERVAL_HOURS` hours the app logs and updates the dashboard with a short “program is alive” status and the next scheduled collection time.
+Every `HEARTBEAT_INTERVAL_HOURS` hours the app logs and updates the dashboard with a short “program is alive” status and the next scheduled collection time. The daily audit is sent at `DAILY_AUDIT_HOUR:DAILY_AUDIT_MINUTE` in `APP_TIMEZONE`, default `23:30 Europe/Madrid`.
 
 Scheduled collection failures are reported immediately in Telegram with the job time, expected reward count, collected count, error, and automatic recovery status. If the session is lost, the scheduler tries one automatic login recovery before sending the final failure alert. Manual failed attempts still only update the dashboard.
 
@@ -273,9 +285,12 @@ When running under PM2, the app detects whether the previous process stopped gra
 - graceful shutdown writes `data/graceful_shutdown.flag`;
 - missing, invalid, or stale flag is treated as PM2 crash/reboot restart;
 - the bot sends a temporary Telegram warning message outside the dashboard;
+- the warning includes the previous heartbeat and approximate downtime when available;
 - the message is deleted after `RESTART_NOTIFICATION_TTL_HOURS` hours.
 
 This restart notification is the only intentional exception to the one-dashboard-message rule.
+
+If the phone or server is fully powered off, the app cannot send a Telegram message at the moment it disappears. For real server-down alerts, use an external monitor that checks a heartbeat from another machine or cloud service. The in-app restart warning only fires after the phone/server comes back online.
 
 ## Troubleshooting
 

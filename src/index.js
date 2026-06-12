@@ -18,8 +18,10 @@ const {
   consumeGracefulShutdownFlag,
   hoursSince,
   isPm2Runtime,
+  readAppHeartbeat,
   readLastSuccessfulCollectTimestamp,
   safeWriteLastCollect,
+  writeAppHeartbeat,
   writeGracefulShutdownFlag,
   writeRestartNotification
 } = require('./utils/runtimeState');
@@ -41,6 +43,11 @@ async function ensureDataDirs() {
 async function notifyPm2RestartIfNeeded(bot) {
   const restartState = await consumeGracefulShutdownFlag();
   if (restartState.graceful || !isPm2Runtime()) return null;
+  const lastHeartbeat = await readAppHeartbeat();
+  const downtimeMs = lastHeartbeat ? Date.now() - new Date(lastHeartbeat.at).getTime() : null;
+  const downtimeText = downtimeMs && downtimeMs > 0
+    ? `${Math.round(downtimeMs / 60000)} хв`
+    : 'невідомо';
 
   const sent = await sendMessageToChat(
     bot,
@@ -49,6 +56,9 @@ async function notifyPm2RestartIfNeeded(bot) {
       '⚠️ Сервер перезапустився',
       `Час: ${formatDateTime(new Date())}`,
       'Причина: PM2 restart detected',
+      `Попередній стан: ${restartState.reason}`,
+      `Останній heartbeat: ${lastHeartbeat ? `${formatDateTime(lastHeartbeat.at)} (${lastHeartbeat.reason})` : 'невідомо'}`,
+      `Орієнтовний downtime: ${downtimeText}`,
       'Статус: Працює нормально'
     ].join('\n')
   );
@@ -83,6 +93,14 @@ function hasUpcomingScheduledRun(sessionRepository) {
   const date = new Date(nextRunAt);
   if (Number.isNaN(date.getTime())) return false;
   return date.getTime() > Date.now() && date.getTime() - Date.now() <= 10 * 60 * 1000;
+}
+
+function collectResultStatus(eventResult) {
+  const title = collectStatusTitle(eventResult, eventResult.source !== 'manual_collect');
+  if (eventResult.source === 'daily_store_check') return `Daily store check: ${title}`;
+  if (eventResult.source === 'retry_collect') return `Retry collect: ${title}`;
+  if (eventResult.source === 'scheduled_collect') return `Scheduled collect: ${title}`;
+  return title;
 }
 
 async function runStartupAutoCollectIfNeeded({ scheduler, sessionRepository, dashboard }) {
@@ -153,6 +171,9 @@ async function bootstrap() {
     );
   });
   let restartNotificationTimer = await notifyPm2RestartIfNeeded(bot);
+  await writeAppHeartbeat('bootstrap_start').catch((error) => {
+    logger.debug({ error }, 'Failed to write startup heartbeat');
+  });
 
   let dashboard;
   const scheduler = new RewardScheduler({
@@ -199,7 +220,7 @@ async function bootstrap() {
       if (event.type !== 'collect_result') return;
 
       if (dashboard) {
-        const status = collectStatusTitle(event.result, true);
+        const status = collectResultStatus(event.result);
         await dashboard.setStatus(
           status,
           {
