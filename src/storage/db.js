@@ -38,6 +38,7 @@ function createDb() {
       dashboard_chat_id TEXT,
       dashboard_recent_actions_json TEXT NOT NULL DEFAULT '[]',
       dashboard_recent_messages_json TEXT NOT NULL DEFAULT '[]',
+      user_settings_json TEXT NOT NULL DEFAULT '{}',
       active_browser_session INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     );
@@ -61,6 +62,9 @@ function createDb() {
   }
   if (!sessionColumns.includes('dashboard_recent_messages_json')) {
     db.exec("ALTER TABLE session_state ADD COLUMN dashboard_recent_messages_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!sessionColumns.includes('user_settings_json')) {
+    db.exec("ALTER TABLE session_state ADD COLUMN user_settings_json TEXT NOT NULL DEFAULT '{}'");
   }
 
   const rewardColumns = db.prepare('PRAGMA table_info(reward_runs)').all().map((column) => column.name);

@@ -10,8 +10,9 @@ const { buildCollectSummary, collectStatusTitle, isVerifiedCollect } = require('
 const RewardScheduler = require('./scheduler/rewardScheduler');
 const StatusReporter = require('./status/statusReporter');
 const Dashboard = require('./bot/dashboard');
-const { createTelegramBot, deleteMessageSafe, sendMessageToChat } = require('./bot/telegramBot');
+const { createTelegramBot, deleteMessageSafe, sendLongMessageToChat, sendMessageToChat, sendPhotoToChat } = require('./bot/telegramBot');
 const { registerBotHandlers } = require('./bot/botHandlers');
+const { createImageCollage } = require('./utils/imageCollage');
 const { formatDateTime, timeZoneName } = require('./utils/time');
 const {
   clearRestartNotification,
@@ -101,6 +102,45 @@ function collectResultStatus(eventResult) {
   if (eventResult.source === 'retry_collect') return `Retry collect: ${title}`;
   if (eventResult.source === 'scheduled_collect') return `Scheduled collect: ${title}`;
   return title;
+}
+
+function rewardLines(rewards) {
+  if (!rewards || rewards.length === 0) return '- нагороди не визначено';
+  return rewards.map((reward, index) => `${index + 1}. ${reward.name}`).join('\n');
+}
+
+function buildSuccessNotification(result) {
+  return [
+    '✅ Нагороди успішно зібрано',
+    `Job type: ${result.source || 'unknown'}`,
+    `Status: ${result.status}`,
+    `Progress: ${result.collectedCount}/${result.expectedCount}`,
+    `Verified: ${formatDateTime(result.verifiedAt || result.createdAt)}`,
+    '',
+    'Нагороди:',
+    rewardLines(result.rewards),
+    '',
+    `Next run: ${formatDateTime(result.nextRunAt)}`
+  ].join('\n');
+}
+
+async function sendSuccessNotificationIfEnabled({ bot, sessionRepository, result }) {
+  const enabled = sessionRepository.getState().userSettings.successNotificationsEnabled;
+  if (!enabled || result.status !== 'success') return;
+
+  const text = buildSuccessNotification(result);
+  const photoPath = await createImageCollage(result.imagePaths || []).catch((error) => {
+    logger.debug({ error }, 'Success notification collage failed');
+    return null;
+  });
+
+  if (photoPath) {
+    const caption = text.length <= 1000 ? text : '✅ Нагороди успішно зібрано. Повний звіт нижче.';
+    const sent = await sendPhotoToChat(bot, config.telegram.chatId, photoPath, caption);
+    if (sent && text.length <= 1000) return;
+  }
+
+  await sendLongMessageToChat(bot, config.telegram.chatId, text);
 }
 
 async function runStartupAutoCollectIfNeeded({ scheduler, sessionRepository, dashboard }) {
@@ -218,6 +258,8 @@ async function bootstrap() {
       }
 
       if (event.type !== 'collect_result') return;
+
+      await sendSuccessNotificationIfEnabled({ bot, sessionRepository, result: event.result });
 
       if (dashboard) {
         const status = collectResultStatus(event.result);

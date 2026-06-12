@@ -1,5 +1,18 @@
 const { nowIso } = require('../utils/time');
 
+const DEFAULT_USER_SETTINGS = {
+  successNotificationsEnabled: false
+};
+
+function parseJson(value, fallback) {
+  try {
+    const parsed = JSON.parse(value || '');
+    return parsed && typeof parsed === 'object' ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 class SessionRepository {
   constructor(db) {
     this.db = db;
@@ -19,6 +32,10 @@ class SessionRepository {
       dashboardChatId: row.dashboard_chat_id,
       dashboardRecentActions: row.dashboard_recent_actions_json,
       dashboardRecentMessages: row.dashboard_recent_messages_json,
+      userSettings: {
+        ...DEFAULT_USER_SETTINGS,
+        ...parseJson(row.user_settings_json, {})
+      },
       activeBrowserSession: Boolean(row.active_browser_session),
       updatedAt: row.updated_at
     };
@@ -46,6 +63,9 @@ class SessionRepository {
       dashboardRecentMessages: Object.hasOwn(partial, 'dashboardRecentMessages')
         ? partial.dashboardRecentMessages
         : current.dashboardRecentMessages,
+      userSettings: Object.hasOwn(partial, 'userSettings')
+        ? { ...DEFAULT_USER_SETTINGS, ...(partial.userSettings || {}) }
+        : current.userSettings,
       activeBrowserSession: Object.hasOwn(partial, 'activeBrowserSession')
         ? partial.activeBrowserSession
         : current.activeBrowserSession
@@ -65,6 +85,7 @@ class SessionRepository {
         dashboard_chat_id = ?,
         dashboard_recent_actions_json = ?,
         dashboard_recent_messages_json = ?,
+        user_settings_json = ?,
         active_browser_session = ?,
         updated_at = ?
       WHERE key = 'main'
@@ -80,6 +101,7 @@ class SessionRepository {
       next.dashboardChatId,
       next.dashboardRecentActions || '[]',
       next.dashboardRecentMessages || '[]',
+      JSON.stringify(next.userSettings || DEFAULT_USER_SETTINGS),
       next.activeBrowserSession ? 1 : 0,
       nowIso()
     );
@@ -107,6 +129,16 @@ class SessionRepository {
     return this.update({
       authStatus: 'session_lost',
       waitingOtpSince: null
+    });
+  }
+
+  updateUserSettings(partial) {
+    const current = this.getState().userSettings || DEFAULT_USER_SETTINGS;
+    return this.update({
+      userSettings: {
+        ...current,
+        ...(partial || {})
+      }
     });
   }
 }

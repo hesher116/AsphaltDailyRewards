@@ -84,6 +84,9 @@ function dashboardKeyboard(view = 'dashboard') {
             { text: 'Сесія', callback_data: 'check_session' }
           ],
           [
+            { text: 'Success alerts', callback_data: 'cmd_success_notifications' }
+          ],
+          [
             { text: 'Останні збори', callback_data: 'recent_collects' },
             { text: 'Історія', callback_data: 'history' }
           ]

@@ -367,6 +367,7 @@ class Dashboard {
       'Сесія:',
       '/login - авторизація OTP',
       '/check_session - перевірити login',
+      '/success_notifications - success alerts',
       '',
       'Сервіс:',
       '/dashboard_reset - новий dashboard'

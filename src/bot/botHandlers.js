@@ -26,6 +26,7 @@ const BOT_COMMANDS = [
   { command: 'history', description: 'Історія зборів' },
   { command: 'login', description: 'Авторизація через OTP' },
   { command: 'check_session', description: 'Перевірити сесію' },
+  { command: 'success_notifications', description: 'Увімкнути/вимкнути success alerts' },
   { command: 'dashboard_reset', description: 'Перестворити dashboard' }
 ];
 
@@ -38,6 +39,7 @@ const CALLBACK_LABELS = {
   cmd_snapshot: 'cmd_snapshot',
   cmd_next: 'cmd_next',
   cmd_images: 'cmd_images',
+  cmd_success_notifications: 'cmd_success_notifications',
   login: 'login',
   check_session: 'check_session',
   collect: 'collect',
@@ -118,6 +120,7 @@ function formatRun(run) {
 
 function formatStatus(sessionRepository, scheduler) {
   const state = sessionRepository.getState();
+  const successNotifications = state.userSettings.successNotificationsEnabled ? 'увімкнено' : 'вимкнено';
   return [
     `Авторизація: ${state.authStatus}`,
     `Браузер: ${state.activeBrowserSession ? 'активний' : 'закритий'}`,
@@ -125,6 +128,7 @@ function formatStatus(sessionRepository, scheduler) {
     `Останній успішний збір: ${formatDateTime(state.lastSuccessfulCollectAt)}`,
     `Останній запуск: ${formatDateTime(state.lastRunAt)}`,
     `Наступний запуск: ${formatDateTime(state.nextRunAt)}`,
+    `Success notifications: ${successNotifications}`,
     `Збір зараз: ${scheduler.isRunning() ? 'виконується' : 'не виконується'}`
   ].join(' | ');
 }
@@ -136,6 +140,7 @@ function formatDoctor(ctx) {
     ? ctx.bot.getPollingHealth()
     : {};
   const memory = process.memoryUsage();
+  const successNotifications = state.userSettings.successNotificationsEnabled ? 'on' : 'off';
   const eventLoopP95Ms = Math.round(eventLoopDelay.percentile(95) / 1e6);
   const eventLoopMaxMs = Math.round(eventLoopDelay.max / 1e6);
   const lastError = polling.lastError
@@ -149,6 +154,7 @@ function formatDoctor(ctx) {
     `Memory RSS: ${Math.round(memory.rss / 1024 / 1024)} MB`,
     `Event loop delay p95/max: ${eventLoopP95Ms}/${eventLoopMaxMs} ms`,
     `Auth: ${state.authStatus}`,
+    `Success notifications: ${successNotifications}`,
     `Browser: ${state.activeBrowserSession ? 'active' : 'closed'}`,
     `Collect running: ${ctx.scheduler.isRunning() ? 'yes' : 'no'}`,
     `Last run: ${lastRun ? `${formatDateTime(lastRun.createdAt)} ${lastRun.status} ${lastRun.collectedCount}/${lastRun.expectedCount}` : 'немає'}`,
@@ -161,6 +167,29 @@ function formatDoctor(ctx) {
     `Polling last success: ${formatDateTime(polling.lastSuccessAt)}`,
     `Polling last error: ${lastError}`
   ].join('\n');
+}
+
+async function showSuccessNotificationSetting(ctx, value = null) {
+  if (value !== null) {
+    ctx.sessionRepository.updateUserSettings({ successNotificationsEnabled: Boolean(value) });
+  }
+  const enabled = ctx.sessionRepository.getState().userSettings.successNotificationsEnabled;
+  const message = [
+    `Сповіщення про успішний збір: ${enabled ? 'увімкнено' : 'вимкнено'}`,
+    enabled
+      ? 'Після автоматичного success collect бот надсилатиме окреме повідомлення з нагородами, фото і next run.'
+      : 'Success collect лишається в dashboard, history і logs, але без окремого Telegram повідомлення.',
+    'Критичні alerts і warnings завжди залишаються увімкненими.'
+  ].join('\n');
+  await ctx.dashboard.setStatus('Налаштування оновлено', {
+    action: 'Success notifications',
+    message
+  });
+}
+
+async function toggleSuccessNotificationSetting(ctx) {
+  const current = ctx.sessionRepository.getState().userSettings.successNotificationsEnabled;
+  await showSuccessNotificationSetting(ctx, !current);
 }
 
 async function latestDebugSnapshot() {
@@ -514,6 +543,14 @@ function registerBotHandlers({ bot, authFlow, scheduler, rewardsRepository, sess
     await dashboard.showCommands();
   });
 
+  bot.onText(/^\/success_notifications(?:\s+(on|off|status))?$/i, async (msg, match) => {
+    if (!await guardAdmin(bot, msg)) return;
+    const mode = String(match[1] || 'status').toLowerCase();
+    if (mode === 'on') await showSuccessNotificationSetting(ctx, true);
+    else if (mode === 'off') await showSuccessNotificationSetting(ctx, false);
+    else await showSuccessNotificationSetting(ctx);
+  });
+
   bot.onText(/^\/snapshot$/, async (msg) => {
     if (!await guardAdmin(bot, msg)) return;
     await sendLatestSnapshot(ctx);
@@ -600,6 +637,7 @@ function registerBotHandlers({ bot, authFlow, scheduler, rewardsRepository, sess
     else if (query.data === 'cmd_snapshot') await sendLatestSnapshot(ctx);
     else if (query.data === 'cmd_next') await showNextRun(ctx);
     else if (query.data === 'cmd_images') await showRecentCollects(ctx);
+    else if (query.data === 'cmd_success_notifications') await toggleSuccessNotificationSetting(ctx);
     else if (query.data === 'login') await startLogin(ctx);
     else if (query.data === 'check_session') await checkSession(ctx);
     else if (query.data === 'collect') await collectNow(ctx);

@@ -48,6 +48,16 @@ Dashboard shows:
 
 Long command output is kept outside the dashboard caption. `doctor` sends the full report as a separate Telegram message, and large log output is sent as a text document when it would become hard to read or exceed Telegram limits. The dashboard only records a short summary so the one-message dashboard stays readable.
 
+Success collection notifications are a persistent Telegram-controlled setting. By default they are off, matching the original dashboard-only behavior. Use:
+
+```text
+/success_notifications status
+/success_notifications on
+/success_notifications off
+```
+
+The `Success alerts` button in `Команди` toggles the same setting. When enabled, automatic successful collections send a separate Telegram message with status, reward names, reward photo/collage when available, and the next scheduled run. Failure alerts, warnings, and critical messages are never disabled by this setting.
+
 If the dashboard message is deleted or cannot be edited, run:
 
 ```text
